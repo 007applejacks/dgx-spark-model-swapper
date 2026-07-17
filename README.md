@@ -19,6 +19,72 @@ endpoint.
 
 ![Full dashboard: GPU bay, models registry, UPS telemetry, disk/updates, and danger zone](assets/dashboard.png)
 
+## Features
+
+- **One-click model swap** — stop → drain the GPU → serve the target → wait for health, so
+  switching models never risks wedging the box (see the GPU-reset note above).
+- **Live telemetry** — unified memory usage, GPU utilization, temperature, uptime, decode
+  throughput, and in-flight/served request counts.
+- **Model registry** — every recipe as a card with size, quant, context, measured speed, and
+  "best for" tags; committed (official) vs. draft (unpromoted) status at a glance.
+- **Import from Hugging Face** — paste a repo id, get an auto-proposed recipe from its
+  `config.json`, edit anything, and optionally kick off the weights download in one step. Full
+  walkthrough below.
+- **Hand-edit recipes** — edit a model's raw `.env` directly for tuning knobs the Import form
+  doesn't expose (tool-parser choice, KV cache dtype, sampling overrides, hand-written comments).
+- **HF lookup** — re-fetch a model's own `config.json` from Hugging Face while editing, so you're
+  never trusting a stale or misremembered spec.
+- **GB10 stability battery** — a 9-test suite (health, generation, coherence, long-form,
+  streaming, tool-calling, large-context, concurrency, sustained run) that validates a model
+  actually serves reliably on this hardware before you rely on it. A clean pass clears the
+  **Experimental** flag.
+- **Promote workflow** — once a model's proven stable, commit + push its recipe straight to the
+  model-configs repo from the dashboard — no separate git round-trip.
+- **Transparent model proxy** (`/proxy/v1`) — an OpenAI-compatible endpoint that always routes to
+  whatever's currently loaded, so client configs never break on a swap.
+- **Chat panel** — talk to the loaded model directly from the dashboard, served by a sandboxed
+  companion daemon so untrusted model output never touches the privileged control plane.
+- **Disk & weights management** — see per-model disk usage, delete a model's weights, or clean up
+  leftover bytes from aborted downloads.
+- **System updates** — check and install `apt` upgrades from the dashboard, password-gated per
+  action (no standing passwordless grant).
+- **UPS telemetry** — battery charge, load, and runtime if a supported UPS is attached.
+- **Log viewer** — tail the loaded model's container logs or the swap-ui service journal without
+  SSHing in.
+- **Reboot control** — a confirm-gated way to recover a wedged GPU.
+
+## Importing a model from Hugging Face
+
+1. Click **Import** (top-right of the Models section) — or use the deep link
+   `/?import=<owner>/<repo>` to open the dialog pre-filled and auto-inspected.
+2. Paste the HF repo id (e.g. `owner/Model-Name-NVFP4`) into **HF repo id** and click **Inspect**.
+3. The backend fetches the repo's `config.json` and proposes a recipe:
+   - reasoning parser guessed from the architecture/name (`qwen3`, `nemotron_v3`, or none)
+   - context length from `max_position_embeddings` (capped at 262144 to bound KV memory)
+   - quantization detected from `quantization_config` (NVFP4/ModelOpt, fp8, AWQ, or `auto`)
+   - tool-calling on, spec-decode off, flagged **Experimental**
+
+   Anything the detection couldn't determine (missing config, unrecognized architecture, no quant
+   info) shows up as an inline warning — read those before trusting the defaults.
+4. Edit anything that needs correcting: model id, display label, reasoning parser, quantization,
+   max context, or extra vLLM args (e.g. `--max-num-seqs 4` for MoE models).
+5. Click **Add & download** to save the recipe as a draft and start pulling weights into the
+   HF-cache volume in the background — or **Add only** to just save the recipe (weights then pull
+   automatically on first load).
+6. Once weights are down, **Load** it from the Models grid.
+7. Run **Test stability** on the loaded model — a clean pass on the GB10 battery clears the
+   Experimental flag.
+8. Once non-experimental, **Promote** commits and pushes the recipe to `gb10-model-configs` —
+   no separate git step needed.
+
+New recipes always start as **drafts**, and their tuning knobs (spec-decode, KV cache dtype,
+sampling overrides) are pinned off — validated per-model tuning like the canonical Qwen3.6 recipe
+isn't something the importer can infer from `config.json` alone.
+
+**Gated or rate-limited repos**: set `HF_TOKEN` (see `swap-ui/README.md`'s "Model lifecycle"
+section). Without it, public repos still download but at an unauthenticated rate limit, and gated
+repos fail outright.
+
 ## Layout
 
 ```
