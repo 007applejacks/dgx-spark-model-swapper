@@ -147,12 +147,13 @@ LAN/tailnet endpoint keeps working alongside it.
 
 ### Reboot button — sudoers requirement
 
-The Reboot button runs `sudo /sbin/reboot`. Grant the service's user passwordless rights for just
-that command. Install a sudoers drop-in on the box:
+The Reboot button runs `sudo /sbin/reboot`. Grant the service's user (`deploy` by default — see
+`systemd/gb10-swap.service`) passwordless rights for just that command. Install a sudoers drop-in
+on the box:
 
 ```
 # /etc/sudoers.d/gb10-swap-reboot   (chmod 440, edit via visudo -f)
-<user> ALL=(root) NOPASSWD: /sbin/reboot
+deploy ALL=(root) NOPASSWD: /sbin/reboot
 ```
 
 Without it, the Reboot button returns an error instead of rebooting.

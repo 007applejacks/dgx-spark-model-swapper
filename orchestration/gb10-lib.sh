@@ -2,10 +2,8 @@
 # gb10-lib.sh — shared helpers for the token-side gb10 (DGX Spark) drivers.
 #
 # Runs ON token. Reaches the box via SSH over the LAN — the GB10_SSH alias (see
-# manifests/containers.env) resolves to <host>.local (Tailscale SSH was dropped: its
-# check-mode re-auth hangs the alias). NOTE: that alias's literal value is still "gx10" —
-# it's a real ~/.ssh/config Host entry on the operator machine and the box's real mDNS
-# name, neither of which this repo can rename on its own; see manifests/containers.env.
+# manifests/containers.env; set it to your own ~/.ssh/config Host entry for the box) resolves to
+# its mDNS/LAN hostname (Tailscale SSH was dropped: its check-mode re-auth hangs the alias).
 # Job parameters are ALWAYS passed to `docker` via --env-file /
 # files, never string-interpolated into the remote shell (injection defense).
 #

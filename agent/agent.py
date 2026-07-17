@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """gb10-agent — unprivileged chat/agent + tool-execution daemon for the gb10 Model Swapper.
 
-Runs as the dedicated, sandboxed `gx10` user (uid 1001; NO sudo, NOT in the docker group — see the
-systemd unit / README for why this real OS username is unrenamed), jailed to /home/gx10 by its
-systemd unit (ProtectSystem=strict + ReadWritePaths=/home/gx10). The browser talks to THIS service
-directly for chat — so untrusted model output, and (next) fetched web-search content, never transit
-the privileged nathan-owned :8080 control plane. This daemon only ever reaches the loaded model on
-localhost:8002 and the public internet.
+Runs as a dedicated, sandboxed OS user (own uid; NO sudo, NOT in the docker group), jailed to its
+own home directory by its systemd unit (ProtectSystem=strict + ReadWritePaths=<that home>). The
+browser talks to THIS service directly for chat — so untrusted model output, and (next) fetched
+web-search content, never transit the privileged swap-ui control plane. This daemon only ever
+reaches the loaded model on localhost:8002 and the public internet.
 
 Deliberately kept off the privileged path:
-  · no docker / nvidia-smi / apt / sudo — those stay in gb10-swap.service (user=nathan).
+  · no docker / nvidia-smi / apt / sudo — those stay in gb10-swap.service.
   · reads only the model endpoint on :8002 and (soon) does outbound HTTP for web search.
 
 Endpoints:
@@ -19,8 +18,8 @@ Endpoints:
 Tailnet-only, no plaintext HTTP on the wire: the daemon binds 127.0.0.1:8090 (never a routable
 interface), and the ONLY way in is `tailscale serve` terminating TLS on the tailnet and forwarding
 to loopback — path mount /agent → 127.0.0.1:8090. The browser calls same-origin
-https://<node>.ts.net/agent/... (no CORS, no nathan). Author here (Mac clone), deploy into
-/home/gx10/agent (owned by gx10). See README.md.
+https://<node>.ts.net/agent/... (no CORS). Author on your dev machine, deploy into the sandboxed
+user's home directory. See README.md.
 """
 from __future__ import annotations
 
@@ -99,7 +98,8 @@ async def _current_model() -> dict[str, Any]:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Liveness + identity. The uid/home fields prove the daemon runs jailed as `gx10`, not nathan."""
+    """Liveness + identity. The uid/home fields prove the daemon runs jailed as its own sandboxed
+    user, not the privileged swap-ui account."""
     u = pwd.getpwuid(os.getuid())
     return {
         "status": "ok",

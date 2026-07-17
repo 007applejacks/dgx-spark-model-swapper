@@ -82,8 +82,8 @@ export function ChatPanel({
     abortRef.current = ctrl;
 
     try {
-      // Chat runs on the unprivileged gx10-agent daemon, reached same-origin via the tailnet path
-      // mount (/agent → 127.0.0.1:8090). The privileged :8080 (nathan) app is not on this path.
+      // Chat runs on the unprivileged gb10-agent daemon, reached same-origin via the tailnet path
+      // mount (/agent → 127.0.0.1:8090). The privileged :8080 (deploy) app is not on this path.
       const res = await fetch("/agent/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -43,13 +43,16 @@ systemd install steps.
 
 ## A note on naming
 
-This repo uses **"gb10"** — the actual NVIDIA chip in a DGX Spark. A handful of identifiers in the
-scripts and unit files still reflect one specific already-deployed box's real setup (its SSH
-alias, hostname, and a sandboxed OS user the chat daemon runs as) and were deliberately left
-unrenamed rather than silently edited into something that would stop matching reality. If you're
-deploying fresh, use your own host/alias/username and update the handful of places that reference
-them — `manifests/containers.env`, and `agent/`'s systemd unit and bootstrap script are the ones
-that matter.
+This repo uses **"gb10"** — the actual NVIDIA chip in a DGX Spark — plus a couple of example
+placeholder names you should replace with your own before deploying:
+
+- `deploy` — the privileged Linux user the swap-ui service runs as (`sudo`, `docker`).
+- `gb10-agent` — the unprivileged, sandboxed Linux user the chat daemon runs as (see `agent/README.md`).
+- `your-box-ssh-alias` (in `manifests/containers.env`'s `GB10_SSH`) — your own `~/.ssh/config` Host
+  entry for the box.
+
+Rename these to whatever you like; the systemd units, `bootstrap.sh` scripts, and
+`manifests/containers.env` are the places that reference them.
 
 ## License
 

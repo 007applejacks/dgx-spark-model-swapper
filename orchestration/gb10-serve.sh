@@ -127,8 +127,5 @@ fi
 wait_health "$GB10_HEALTH" "${SERVE_TIMEOUT:-900}" "$SERVE_CONTAINER"
 DIGEST=$(gb10_image_digest "$VLLM_IMAGE")
 echo "served:   ${SERVED_NAME}"
-# NOTE: "gx10.local" below is the box's real mDNS/LAN hostname today — a repo-content rename can't
-# change that without also renaming the box itself; see the repo README. Override via GB10_SSH's
-# host if yours differs.
-echo "endpoint: http://gx10.local:${SERVE_PORT}/v1"   # LAN/mDNS from token (no Tailscale)
+echo "endpoint: http://${GB10_SSH}:${SERVE_PORT}/v1"   # LAN/mDNS from token (no Tailscale)
 echo "image:    ${DIGEST:-$VLLM_IMAGE}"

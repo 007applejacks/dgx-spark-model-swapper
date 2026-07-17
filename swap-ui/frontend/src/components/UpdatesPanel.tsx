@@ -196,7 +196,7 @@ export function UpdatesPanel() {
 
             <label className="mt-4 block">
               <span className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
-                <KeyRound className="h-3 w-3" /> sudo password (nathan)
+                <KeyRound className="h-3 w-3" /> sudo password (deploy)
               </span>
               <input
                 type="password"

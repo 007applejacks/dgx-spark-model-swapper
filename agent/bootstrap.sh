@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# bootstrap.sh — create the gb10-agent venv, run AS the sandboxed `gx10` user under /home/gx10.
-# (`gx10` is a real, already-provisioned OS username — see agent/README.md; not renamed to gb10.)
-# The daemon is jailed to /home/gx10 (no sudo/docker), so its venv lives there too — NOT in the
-# nathan-owned repo clone. Deploy copies this dir into /home/gx10/agent, then runs this:
-#   sudo -u gx10 -H bash /home/gx10/agent/bootstrap.sh
+# bootstrap.sh — create the gb10-agent venv, run AS the sandboxed agent user under its own home.
+# The daemon is jailed to that home dir (no sudo/docker), so its venv lives there too — NOT in the
+# main repo clone. Deploy copies this dir into ~/agent for that user, then runs this:
+#   sudo -u gb10-agent -H bash ~gb10-agent/agent/bootstrap.sh
+#
+# AGENT_USER must match systemd's User= for gb10-agent.service (default: gb10-agent).
+AGENT_USER="${AGENT_USER:-gb10-agent}"
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
-if [ "$(id -un)" != "gx10" ]; then
-  echo "refusing to run as $(id -un) — run as the gx10 user: sudo -u gx10 -H bash $0" >&2
+if [ "$(id -un)" != "$AGENT_USER" ]; then
+  echo "refusing to run as $(id -un) — run as the ${AGENT_USER} user: sudo -u ${AGENT_USER} -H bash $0" >&2
   exit 1
 fi
 python3 -m venv .venv

@@ -37,14 +37,10 @@ ORCH_DIR = SCRIPT_DIR.parent / "orchestration"
 DIST_DIR = SCRIPT_DIR / "frontend" / "dist"
 SWAP_SH = ORCH_DIR / "gb10-swap.sh"
 
-# Model recipes live in the dedicated gb10-model-configs repo — gb10 is the system of record for it,
-# so the swap-ui reads recipes there and Promote commits+pushes from the box. Falls back to the
-# in-tree models/ dir for local dev (Mac), where the configs clone doesn't exist.
-#
-# NOTE: the default below is the box's REAL on-disk clone path today — it still says
-# "gx10-model-configs" because only the GitHub repo was renamed to gb10-model-configs (with the
-# old name redirecting), not the live box's folder. Override with CONFIGS_REPO if yours differs.
-CONFIGS_REPO = Path(os.environ.get("CONFIGS_REPO", "/home/nathan/github/gx10-model-configs"))
+# Model recipes live in the dedicated gb10-model-configs repo — the box is the system of record
+# for it, so the swap-ui reads recipes there and Promote commits+pushes from the box. Falls back
+# to the in-tree models/ dir for local dev (Mac), where the configs clone doesn't exist.
+CONFIGS_REPO = Path(os.environ.get("CONFIGS_REPO", "/home/deploy/github/gb10-model-configs"))
 MODELS_DIR = (CONFIGS_REPO / "models") if (CONFIGS_REPO / "models").is_dir() else (SCRIPT_DIR.parent / "models")
 
 SERVE_PORT = int(os.environ.get("SERVE_PORT", "8002"))
@@ -503,9 +499,9 @@ def api_swap_status() -> dict[str, Any]:
     return _job_public()
 
 
-# NOTE: chat moved off this privileged (nathan, sudo+docker) service. It now runs on the unprivileged
-# gb10-agent daemon (real OS user `gx10`, jailed to /home/gx10 — see systemd/gb10-agent.service for
-# why that username is unrenamed), reached same-origin via the tailnet path mount /agent →
+# NOTE: chat moved off this privileged (sudo+docker) service. It now runs on the unprivileged
+# gb10-agent daemon (its own sandboxed OS user, jailed to its own home — see
+# systemd/gb10-agent.service), reached same-origin via the tailnet path mount /agent →
 # 127.0.0.1:8090. Untrusted model output / web-search content must never transit this process.
 
 
