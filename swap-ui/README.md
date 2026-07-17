@@ -11,6 +11,18 @@ into a reboot-only state), starts the target with its correct per-model recipe, 
 health. Every model is served on the **same
 port `:8002`**, so clients never change their endpoint.
 
+## Screenshots
+
+| GPU bay | Models |
+|---|---|
+| ![Loaded model, unified memory, GPU utilization, and activity](../assets/dashboard.png) | ![Model registry cards with load/edit/remove actions](../assets/models.png) |
+
+| UPS | Disk, updates & danger zone |
+|---|---|
+| ![UPS battery/load/runtime telemetry](../assets/ups.png) | ![Disk usage, apt updates, and the reboot control](../assets/disk-updates.png) |
+
+![Chat panel talking to the loaded model](../assets/chat.png)
+
 ## Layout
 
 ```
