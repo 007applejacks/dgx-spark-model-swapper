@@ -15,7 +15,17 @@ stops the running container, **drains the GPU**, starts the target with its vali
 recipe, and waits for health. Every model serves on the same port, so clients never change their
 endpoint.
 
-![Dashboard showing the loaded model, unified memory usage, and GPU telemetry](assets/dashboard.jpg)
+## Screenshots
+
+| GPU bay | Models |
+|---|---|
+| ![Loaded model, unified memory, GPU utilization, and activity](assets/dashboard.jpg) | ![Model registry cards with load/edit/remove actions](assets/models.jpg) |
+
+| UPS | Disk, updates & danger zone |
+|---|---|
+| ![UPS battery/load/runtime telemetry](assets/ups.jpg) | ![Disk usage, apt updates, and the reboot control](assets/disk-updates.jpg) |
+
+![Chat panel talking to the loaded model](assets/chat.jpg)
 
 ## Layout
 

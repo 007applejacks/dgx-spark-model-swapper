@@ -9,19 +9,8 @@ model, and if the target differs it stops the running container, **drains the GP
 the box's sole/primary GPU, `nvidia-smi -r` refuses to reset it; an un-drained swap can wedge it
 into a reboot-only state), starts the target with its correct per-model recipe, and waits for
 health. Every model is served on the **same
-port `:8002`**, so clients never change their endpoint.
-
-## Screenshots
-
-| GPU bay | Models |
-|---|---|
-| ![Loaded model, unified memory, GPU utilization, and activity](../assets/dashboard.jpg) | ![Model registry cards with load/edit/remove actions](../assets/models.jpg) |
-
-| UPS | Disk, updates & danger zone |
-|---|---|
-| ![UPS battery/load/runtime telemetry](../assets/ups.jpg) | ![Disk usage, apt updates, and the reboot control](../assets/disk-updates.jpg) |
-
-![Chat panel talking to the loaded model](../assets/chat.jpg)
+port `:8002`**, so clients never change their endpoint. See screenshots in the
+[repo's top-level README](../README.md#screenshots).
 
 ## Layout
 
