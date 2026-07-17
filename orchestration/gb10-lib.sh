@@ -94,14 +94,14 @@ wait_health() {  # <url> <timeout_s> [container]
 gb10_stop() { gb10_ssh "docker stop '$1' >/dev/null 2>&1 || true"; }
 
 # Wait until the GB10 GPU is responsive with no lingering compute processes.
-# CRITICAL on this box: it has ONE integrated (primary) GPU, so an abrupt CUDA
-# teardown can wedge it into ERR! state, and — unlike a discrete card — it
-# CANNOT be reset (`nvidia-smi -r` refuses the primary GPU) or recovered by
-# reloading kernel modules; only a reboot clears it. So after stopping a GPU
-# container, always drain before the next container grabs the device: confirm
-# the GPU still enumerates (name, not ERR!) and no compute apps remain. If this
-# times out, the GPU is likely wedged — STOP and reboot rather than starting
-# another GPU job (which would fail container init with `gpu requires reset`).
+# CRITICAL on this box: it has ONE GPU, and that GPU is necessarily the system's primary GPU (no
+# secondary GPU to hand console/display duty to), so `nvidia-smi -r` refuses to reset it — this is a
+# general nvidia-smi restriction on primary GPUs, not something specific to the GB10 or to
+# integrated GPUs. An abrupt CUDA teardown can wedge it into ERR! state, and reloading kernel
+# modules doesn't recover it; only a reboot clears it. So after stopping a GPU container, always
+# drain before the next container grabs the device: confirm the GPU still enumerates (name, not
+# ERR!) and no compute apps remain. If this times out, the GPU is likely wedged — STOP and reboot
+# rather than starting another GPU job (which would fail container init with `gpu requires reset`).
 gb10_wait_gpu_idle() {  # <timeout_s>
   local timeout="${1:-120}" waited=0 name apps
   echo "draining GPU (timeout ${timeout}s) ..."
@@ -114,6 +114,6 @@ gb10_wait_gpu_idle() {  # <timeout_s>
     esac
     sleep 3; waited=$((waited+3))
   done
-  echo "ERROR: GPU not idle/healthy after ${timeout}s — it may be wedged (integrated GPU; needs reboot)." >&2
+  echo "ERROR: GPU not idle/healthy after ${timeout}s — it may be wedged (sole/primary GPU; needs reboot)." >&2
   return 1
 }

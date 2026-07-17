@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # gb10-swap.sh — swap the single served model on the box's one GPU, safely and idempotently.
 #
-# The GB10 is an INTEGRATED GPU that cannot be reset (nvidia-smi -r refuses it) — an abrupt CUDA
-# teardown can wedge it into ERR! state, recoverable only by a reboot. So a model swap is:
+# The GB10 is this box's sole/primary GPU, so `nvidia-smi -r` refuses to reset it (a general
+# "won't reset the primary GPU" restriction, not GB10-specific — any single-GPU box hits it, since
+# there's no secondary GPU to take over the console while it resets). An abrupt CUDA teardown can
+# wedge it into ERR! state, recoverable only by a reboot. So a model swap is:
 #   check target → (already loaded & healthy? NOOP) → stop current → DRAIN GPU → start target → wait health.
 #
 # Designed to run BOTH ways:
@@ -84,7 +86,7 @@ fi
 # --- 3. Drain the GPU before the next container grabs it (WEDGE guard) -----------------------
 echo "PHASE draining"
 if ! gb10_wait_gpu_idle "${DRAIN_TIMEOUT:-180}"; then
-  echo "GPU did not drain — likely wedged (integrated GPU; only a reboot recovers)." >&2
+  echo "GPU did not drain — likely wedged (sole/primary GPU; only a reboot recovers)." >&2
   echo "RESULT WEDGED"
   exit 1
 fi

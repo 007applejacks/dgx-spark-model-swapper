@@ -1,11 +1,14 @@
 # gb10 Model Swapper
 
 A small web control plane, **hosted on the box itself**, for one-model-at-a-time vLLM serving on
-an NVIDIA DGX Spark (GB10, 128 GB unified memory). The GB10 can hold only one model in GPU memory
-at a time. This dashboard shows what's loaded and lets you click to swap: it checks the current
-model, and if the target differs it stops the running container, **drains the GPU** (critical — the
-integrated GB10 can't be reset; an un-drained swap can wedge it into a reboot-only state), starts the
-target with its correct per-model recipe, and waits for health. Every model is served on the **same
+an NVIDIA DGX Spark (GB10, 128 GB unified memory). The GB10 has no MIG support (architectural, per
+NVIDIA — a consequence of the unified CPU/GPU memory pool), so there's no hardware-isolated way to
+run several models concurrently with guaranteed separation; this tool deliberately serves one at a
+time instead. This dashboard shows what's loaded and lets you click to swap: it checks the current
+model, and if the target differs it stops the running container, **drains the GPU** (critical — as
+the box's sole/primary GPU, `nvidia-smi -r` refuses to reset it; an un-drained swap can wedge it
+into a reboot-only state), starts the target with its correct per-model recipe, and waits for
+health. Every model is served on the **same
 port `:8002`**, so clients never change their endpoint.
 
 ## Layout

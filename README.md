@@ -1,10 +1,14 @@
 # dgx-spark-model-swapper
 
 A small web control plane for an NVIDIA **DGX Spark (GB10)** doing one-model-at-a-time vLLM
-serving. The GB10 is an integrated GPU with unified memory — it can hold exactly one model at a
-time, and (unlike a discrete card) it **cannot be reset** if a swap goes wrong; only a reboot
-recovers it. This tool exists to make swapping between models a safe, one-click, drain-aware
-operation instead of a footgun.
+serving. The GB10 has no MIG (Multi-Instance GPU) support — NVIDIA says that's architectural, not
+a driver gap, a consequence of its unified CPU/GPU memory pool — so there's no hardware-isolated
+way to run multiple models concurrently with guaranteed, separated resources. Combined with the
+large memory footprints of the models this tool targets and the fact that `nvidia-smi -r` refuses
+to reset the box's sole/primary GPU (so a bad interaction between co-resident workloads could wedge
+the whole box, recoverable only by reboot), this tool deliberately serves **one model at a time**
+rather than trying to co-schedule several. This tool exists to make swapping between models a safe,
+one-click, drain-aware operation instead of a footgun.
 
 Click a model in the dashboard and it checks what's currently loaded, and if the target differs:
 stops the running container, **drains the GPU**, starts the target with its validated per-model
