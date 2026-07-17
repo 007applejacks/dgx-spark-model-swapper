@@ -17,15 +17,7 @@ endpoint.
 
 ## Screenshots
 
-| GPU bay | Models |
-|---|---|
-| ![Loaded model, unified memory, GPU utilization, and activity](assets/dashboard.jpg) | ![Model registry cards with load/edit/remove actions](assets/models.jpg) |
-
-| UPS | Disk, updates & danger zone |
-|---|---|
-| ![UPS battery/load/runtime telemetry](assets/ups.jpg) | ![Disk usage, apt updates, and the reboot control](assets/disk-updates.jpg) |
-
-![Chat panel talking to the loaded model](assets/chat.jpg)
+![Full dashboard: GPU bay, models registry, UPS telemetry, disk/updates, and danger zone](assets/dashboard.png)
 
 ## Layout
 
