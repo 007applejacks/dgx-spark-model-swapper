@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <radialGradient id="core" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#7CFFD4" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#35E0A1" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#35E0A1" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.1"/>
+    </filter>
+  </defs>
+
+  <!-- die -->
+  <rect x="1" y="1" width="30" height="30" rx="7.5" fill="#0B1015" stroke="#22333F" stroke-width="1"/>
+
+  <!-- edge pins (the "GPU" read) -->
+  <g fill="#46B8D8" opacity="0.85">
+    <rect x="12" y="2.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="15.2" y="2.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="18.4" y="2.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="12" y="26.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="15.2" y="26.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="18.4" y="26.5" width="1.6" height="3" rx="0.8"/>
+    <rect x="2.5" y="12" width="3" height="1.6" rx="0.8"/>
+    <rect x="2.5" y="15.2" width="3" height="1.6" rx="0.8"/>
+    <rect x="2.5" y="18.4" width="3" height="1.6" rx="0.8"/>
+    <rect x="26.5" y="12" width="3" height="1.6" rx="0.8"/>
+    <rect x="26.5" y="15.2" width="3" height="1.6" rx="0.8"/>
+    <rect x="26.5" y="18.4" width="3" height="1.6" rx="0.8"/>
+  </g>
+
+  <!-- neural traces from the core to the corners -->
+  <g stroke="#35E0A1" stroke-width="1.1" stroke-linecap="round" opacity="0.55" fill="none">
+    <path d="M16 16 L10 10 M16 16 L22 10 M16 16 L10 22 M16 16 L22 22"/>
+  </g>
+  <g fill="#46B8D8">
+    <circle cx="10" cy="10" r="1.5"/>
+    <circle cx="22" cy="10" r="1.5"/>
+    <circle cx="10" cy="22" r="1.5"/>
+    <circle cx="22" cy="22" r="1.5"/>
+  </g>
+
+  <!-- glowing core -->
+  <circle cx="16" cy="16" r="8" fill="url(#core)"/>
+  <circle cx="16" cy="16" r="3.4" fill="#35E0A1" filter="url(#glow)"/>
+  <circle cx="16" cy="16" r="2.3" fill="#CFFFEC"/>
+</svg>

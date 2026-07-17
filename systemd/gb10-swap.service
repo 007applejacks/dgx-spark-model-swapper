@@ -1,0 +1,24 @@
+[Unit]
+Description=gb10 Model Swapper — web control plane for one-model-at-a-time vLLM serving
+# Runs ON the box, from the deploy clone (adjust WorkingDirectory/ExecStart below if yours differs
+# from /home/nathan/github/dgx-spark-model-swapper). Drives local docker/nvidia-smi (GB10_LOCAL=1),
+# so it needs docker up. It does NOT require a model to be loaded to start.
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=nathan
+WorkingDirectory=/home/nathan/github/dgx-spark-model-swapper/swap-ui
+Environment=GB10_LOCAL=1
+# Optional host-local secrets (HF_TOKEN for authenticated / gated / full-speed HF downloads).
+# Root-owned, 640, never committed. The leading '-' makes it optional (service starts without it).
+EnvironmentFile=-/etc/gb10-swap.env
+# Serves the built React dashboard + /api on all interfaces (LAN + tailnet). No auth (trusted network).
+ExecStart=/home/nathan/github/dgx-spark-model-swapper/swap-ui/.venv/bin/python /home/nathan/github/dgx-spark-model-swapper/swap-ui/app.py --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

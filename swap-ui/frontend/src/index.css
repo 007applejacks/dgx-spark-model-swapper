@@ -1,0 +1,119 @@
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark is the default theme; .light on <html> overrides. Colors are RGB triplets consumed by
+     Tailwind as rgb(var(--x) / <alpha-value>). */
+  :root {
+    color-scheme: dark;
+    --bg: 11 16 21;
+    --panel: 18 26 34;
+    --panel2: 14 21 28;
+    --line: 32 48 60;
+    --ink: 220 230 238;
+    --muted: 126 143 157;
+    --signal: 53 224 161;
+    --amber: 245 177 76;
+    --coral: 251 107 91;
+    --cyan: 70 184 216;
+    --shadow-bay: 0 0 0 1px rgb(var(--line)), 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+    --shadow-glow: 0 0 24px -6px rgba(53, 224, 161, 0.45);
+    --grid-line: rgba(255, 255, 255, 0.015);
+    --glow-a: rgba(70, 184, 216, 0.06);
+    --glow-b: rgba(53, 224, 161, 0.05);
+    --fill-empty: rgba(255, 255, 255, 0.05);
+  }
+  :root.light {
+    color-scheme: light;
+    --bg: 223 229 235;
+    --panel: 255 255 255;
+    --panel2: 234 239 244;
+    --line: 202 212 221;
+    --ink: 22 32 43;
+    --muted: 92 107 120;
+    --signal: 13 150 100;
+    --amber: 168 108 16;
+    --coral: 206 54 40;
+    --cyan: 21 122 156;
+    --shadow-bay: 0 0 0 1px rgb(var(--line)), 0 18px 44px -28px rgba(15, 23, 32, 0.22);
+    --shadow-glow: 0 0 22px -8px rgba(13, 150, 100, 0.35);
+    --grid-line: rgba(20, 40, 60, 0.05);
+    --glow-a: rgba(21, 122, 156, 0.05);
+    --glow-b: rgba(13, 150, 100, 0.04);
+    --fill-empty: rgba(20, 40, 60, 0.06);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    overflow-x: hidden; /* never allow horizontal scroll on mobile */
+  }
+  body {
+    @apply bg-bg text-ink font-mono antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 78% -10%, var(--glow-a), transparent 60%),
+      radial-gradient(900px 500px at 0% 110%, var(--glow-b), transparent 55%);
+    background-attachment: fixed;
+    transition: background-color 0.2s ease;
+  }
+  /* Fine console grid, very subtle */
+  #root::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 44px 44px;
+    z-index: 0;
+  }
+  ::selection {
+    background: rgb(var(--signal) / 0.25);
+  }
+  /* Visible, theme-aware scrollbars (browsers hide overlay scrollbars on dark by default). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--line));
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--muted));
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-[0.22em] text-muted;
+  }
+  .hairline {
+    @apply border-line;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

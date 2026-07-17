@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+/swap-ui/frontend/node_modules/
+/swap-ui/frontend/dist/
+/models/
+.DS_Store
