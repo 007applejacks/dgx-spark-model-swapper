@@ -1056,8 +1056,8 @@ def api_save_model_env(model_id: str, body: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/models/{model_id}/hf-lookup")
 def api_model_hf_lookup(model_id: str) -> dict[str, Any]:
     """Authoritative reference values for the recipe editor: re-fetch the model's OWN config.json
-    from HuggingFace (never trust training-memory guesses about a specific checkpoint — see
-    CLAUDE.md) so the user can hand-edit against ground truth instead of stale assumptions."""
+    from HuggingFace (never trust a guessed/remembered checkpoint config) so the user can
+    hand-edit against ground truth instead of stale assumptions."""
     p = _env_path_for(model_id)
     if p is None:
         raise HTTPException(404, "unknown model")

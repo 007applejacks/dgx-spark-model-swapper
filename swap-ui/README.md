@@ -13,6 +13,7 @@ port `:8002`**, so clients never change their endpoint.
 ```
 swap-ui/
 ├── app.py              FastAPI backend (status/models/swap/reboot; serves the built SPA)
+├── stability.py         the GB10 stability battery (see "Model lifecycle" below)
 ├── requirements.txt    fastapi + uvicorn
 ├── bootstrap.sh        create the .venv on the box
 └── frontend/           React + Vite + Tailwind dashboard (built → dist/, served by app.py)
@@ -35,28 +36,42 @@ A recipe with uncommitted changes shows as a **draft**; committed = official.
 
 ## HTTP API
 
+Chat is **not** served here — it's a separate call to the `gb10-agent` daemon on `:8090`
+(`POST /agent/api/chat` through the tailnet mount, or `:8090/api/chat` directly). See `../agent/`.
+
 | Route | Purpose |
 |---|---|
+| `GET /health` | app liveness |
 | `GET /api/status` | current model (from `:8002/v1/models`), GPU telemetry, active swap job |
+| `GET /api/logs` | tail the loaded model's container logs, or the swap-ui service journal |
+| `GET /api/ups` | APC UPS telemetry (via apcupsd/apcaccess), if one's attached |
 | `GET /api/models` | registry + `source` (committed/draft) + which have downloaded weights |
 | `POST /api/models/refresh` | re-scan the HF-cache volume for downloaded weights |
 | `POST /api/swap` `{model_id}` | start a swap (background job; poll status) |
 | `GET /api/swap/status` | current job phase/result + log tail |
 | `POST /api/swap/cancel` | abort an in-progress load (stops the target container, ends the driver) |
+| `POST /api/unload` | stop the serving container, leave the GB10 free |
+| `GET /api/disk` | HF-cache disk usage, per-model cache size, incomplete-download bytes |
+| `POST /api/disk/delete` `{model_id}` | delete a model's downloaded weights (refuses if loaded/in-flight) |
+| `POST /api/disk/clean` | remove leftover `.incomplete` blobs from aborted downloads |
+| `GET /api/updates` | list upgradable apt packages (no privilege needed) |
+| `POST /api/updates/refresh` `{password}` | `apt-get update` (password piped to `sudo -S`, never logged) |
+| `POST /api/updates/install` `{password}` | `apt-get update && apt-get upgrade` |
+| `GET /api/updates/job` | current apt job state + log tail |
+| `POST /api/updates/cancel` | terminate an in-progress apt job |
 | `POST /api/reboot` | `sudo reboot` — recover a wedged GPU (confirm-gated in the UI) |
 | `POST /api/import/inspect` `{repo}` | fetch an HF repo's config.json → propose an editable recipe |
 | `POST /api/models` `{recipe}` | write a new recipe (**draft** — uncommitted in the configs repo) |
+| `GET /api/models/{id}/env` | raw `.env` |
+| `POST /api/models/{id}/env` `{text}` | hand-edit a recipe's raw `.env` text in place |
+| `GET /api/models/{id}/hf-lookup` | re-fetch the model's own config.json from HF (ground truth for the editor) |
+| `POST /api/models/{id}/promote` | **commit + push** the recipe to the configs repo (non-experimental only) |
+| `DELETE /api/models/{id}` | remove a **draft** recipe (committed ones are removed via the repo) |
 | `POST /api/import/download` `{repo}` | pull weights into the HF-cache volume (background; byte progress) |
 | `GET /api/import/status` | current download progress + log tail |
-| `POST /api/models/{id}/promote` | **commit + push** the recipe to the configs repo (non-experimental only) |
-| `GET /api/models/{id}/env` | raw `.env` |
-| `DELETE /api/models/{id}` | remove a **draft** recipe (committed ones are removed via the repo) |
 | `POST /api/test` | run the GB10 stability battery against the loaded model (background) |
 | `GET /api/test/status` | live per-test results + report |
-| `POST /api/chat` | streaming chat proxy to the loaded model (SSE) — see `../agent/` |
-| `POST /api/unload` | stop the serving container, leave the GB10 free |
 | `* /proxy/v1/{path}` | **transparent model proxy** (see below) |
-| `GET /health` | app liveness |
 
 ## Transparent model proxy
 
@@ -156,7 +171,11 @@ on the box:
 deploy ALL=(root) NOPASSWD: /sbin/reboot
 ```
 
-Without it, the Reboot button returns an error instead of rebooting.
+**Without it, this fails silently, not loudly**: `/api/reboot` fires `sudo /sbin/reboot` in the
+background and returns `{"rebooting": true}` immediately without checking whether `sudo` actually
+succeeded, and the dashboard just optimistically shows "Rebooting…" — so a missing sudoers rule
+means the button appears to work but the box never actually reboots, with no error surfaced
+anywhere. Set this up before you need it.
 
 ### Boot restore
 
