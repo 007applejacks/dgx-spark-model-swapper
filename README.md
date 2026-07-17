@@ -1,4 +1,4 @@
-# dgx-spark-model-swapper
+# DGX Spark Dashboard / Model Bay
 
 A small web control plane for an NVIDIA **DGX Spark (GB10)** doing one-model-at-a-time vLLM
 serving. The GB10 has no MIG (Multi-Instance GPU) support — NVIDIA says that's architectural, not
