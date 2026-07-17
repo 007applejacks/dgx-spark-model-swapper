@@ -15,13 +15,13 @@ port `:8002`**, so clients never change their endpoint.
 
 | GPU bay | Models |
 |---|---|
-| ![Loaded model, unified memory, GPU utilization, and activity](../assets/dashboard.png) | ![Model registry cards with load/edit/remove actions](../assets/models.png) |
+| ![Loaded model, unified memory, GPU utilization, and activity](../assets/dashboard.jpg) | ![Model registry cards with load/edit/remove actions](../assets/models.jpg) |
 
 | UPS | Disk, updates & danger zone |
 |---|---|
-| ![UPS battery/load/runtime telemetry](../assets/ups.png) | ![Disk usage, apt updates, and the reboot control](../assets/disk-updates.png) |
+| ![UPS battery/load/runtime telemetry](../assets/ups.jpg) | ![Disk usage, apt updates, and the reboot control](../assets/disk-updates.jpg) |
 
-![Chat panel talking to the loaded model](../assets/chat.png)
+![Chat panel talking to the loaded model](../assets/chat.jpg)
 
 ## Layout
 
