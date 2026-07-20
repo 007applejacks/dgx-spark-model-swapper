@@ -212,6 +212,12 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
             </div>
           </div>
 
+          {running && job?.progress && (
+            <p className="mb-4 truncate font-mono text-[11px] text-muted" title={job.progress}>
+              {job.progress}
+            </p>
+          )}
+
           {job?.experimental_cleared && (
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-signal/40 bg-signal/[0.08] px-4 py-2.5 font-mono text-[12px] text-signal">
               <ShieldCheck className="h-4 w-4" /> Passed every check — experimental tag removed.
@@ -331,6 +337,12 @@ export function ThroughputPanel({ job, onClose }: { job: ThroughputJob | null; o
           {running && (
             <p className="mb-4 font-mono text-[12px] text-amber">
               Model is offline right now — it will reload automatically once the benchmark finishes.
+            </p>
+          )}
+
+          {running && job?.progress && (
+            <p className="mb-4 truncate font-mono text-[11px] text-muted" title={job.progress}>
+              {job.progress}
             </p>
           )}
 

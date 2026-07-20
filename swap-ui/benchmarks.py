@@ -22,12 +22,13 @@ import asyncio
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -176,11 +177,66 @@ def _serving_container(served_name: str) -> str:
     return f"swap-vllm-{served_name}"
 
 
+_TQDM_SPLIT_RE = re.compile(r"[\r\n]")
+
+
+async def _run_streaming(
+    cmd: list[str],
+    timeout_s: int,
+    on_progress_line: Callable[[str], None] | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[bool, str]:
+    """Run a subprocess, live-streaming its combined stdout+stderr instead of blocking on
+    communicate() until it exits — tqdm-style progress bars (vllm bench serve, lm-eval) rewrite
+    the same line via bare \\r with no trailing \\n, so a plain readline()-based read would only
+    ever see the FINAL state once the process closes its pipes, not the live percentage. Splits
+    the growing buffer on \\r/\\n and reports whatever's after the last split as the current
+    progress line — the same "tail the tqdm line" approach gb10-lib.sh's wait_health already uses
+    for swap jobs, just applied to a live subprocess instead of `docker logs`.
+
+    Returns (ok, raw_combined_output). Kills the process on timeout (asyncio.wait_for cancelling
+    the read loop does NOT kill the underlying OS process on its own).
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+    )
+    chunks: list[bytes] = []
+    tail = ""
+
+    async def _pump() -> None:
+        nonlocal tail
+        assert proc.stdout is not None
+        while True:
+            chunk = await proc.stdout.read(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            tail = (tail + chunk.decode(errors="replace"))[-4096:]
+            if on_progress_line:
+                # split()[-1] alone breaks when a chunk happens to end exactly on \r/\n (a real
+                # bug caught by testing this before deploying): that trailing delimiter produces
+                # an empty string as the final element, silently swallowing whatever line just
+                # completed. Take the last NON-empty segment instead.
+                parts = [p.strip() for p in _TQDM_SPLIT_RE.split(tail) if p.strip()]
+                if parts:
+                    on_progress_line(parts[-1])
+
+    try:
+        await asyncio.wait_for(_pump(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise
+    await proc.wait()
+    return proc.returncode == 0, b"".join(chunks).decode(errors="replace")
+
+
 async def run_vllm_serving_benchmark(
     base_url: str,
     model: str,
     config: BenchmarkConfig,
     gpu_snapshot_fn,
+    on_progress_line: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run `vllm bench serve` (vLLM 0.24's online serving benchmark CLI) against the already-
     running server, inside its own container via `docker exec` — vllm itself only exists in the
@@ -202,17 +258,9 @@ async def run_vllm_serving_benchmark(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=config.timeout_serving
-        )
-        raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
-        if proc.returncode != 0:
-            return {}, raw, f"vllm bench serve exited {proc.returncode}"
+        ok, raw = await _run_streaming(cmd, config.timeout_serving, on_progress_line)
+        if not ok:
+            return {}, raw, "vllm bench serve failed (non-zero exit)"
         parsed = _parse_vllm_benchmark_output(raw)
         parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
@@ -228,6 +276,7 @@ async def run_lm_eval_harness(
     model_repo: str,
     config: BenchmarkConfig,
     gpu_snapshot_fn,
+    on_progress_line: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run lm-eval-harness against the vLLM server via its OpenAI-compatible API, using the
     `local-completions` model type — an HTTP client, not a local model load, so this runs safely
@@ -269,18 +318,11 @@ async def run_lm_eval_harness(
         cmd += ["--limit", str(config.eval_limit)]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "VLLM_USE_V1": "1"},
+        ok, raw = await _run_streaming(
+            cmd, config.timeout_eval, on_progress_line, env={**os.environ, "VLLM_USE_V1": "1"},
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=config.timeout_eval
-        )
-        raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
-        if proc.returncode != 0:
-            return {}, raw, f"lm-eval exited {proc.returncode}"
+        if not ok:
+            return {}, raw, "lm-eval failed (non-zero exit)"
         parsed = _parse_lm_eval_results_file(results_dir)
         parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
@@ -311,13 +353,23 @@ async def run_full_benchmark_suite(
         config=config,
     )
 
-    state = {"phase": "starting", "result": result}
+    state = {"phase": "starting", "result": result, "progress": None}
+
+    def _progress_cb(line: str) -> None:
+        # Fires on every tqdm \r update (potentially many times a second) — cheap dict
+        # construction, no I/O, so this is fine to call at that rate.
+        state["progress"] = line
+        if on_progress:
+            on_progress(state)
 
     if on_progress:
         state["phase"] = "serving"
+        state["progress"] = None
         on_progress(state)
 
-    serving = await run_vllm_serving_benchmark(base_url, model, config, gpu_snapshot_fn)
+    serving = await run_vllm_serving_benchmark(
+        base_url, model, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
+    )
     result.serving, result.serving_raw, result.serving_error = serving
     result.serving_passed = result.serving_error is None and result.serving.get("failed_requests", 0) == 0
 
@@ -326,9 +378,12 @@ async def run_full_benchmark_suite(
 
     if on_progress:
         state["phase"] = "evaluation"
+        state["progress"] = None
         on_progress(state)
 
-    evaluation = await run_lm_eval_harness(base_url, model, model_repo, config, gpu_snapshot_fn)
+    evaluation = await run_lm_eval_harness(
+        base_url, model, model_repo, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
+    )
     result.evaluation, result.evaluation_raw, result.evaluation_error = evaluation
     result.evaluation_passed = result.evaluation_error is None
 
@@ -336,6 +391,7 @@ async def run_full_benchmark_suite(
 
     if on_progress:
         state["phase"] = "complete"
+        state["progress"] = None
         on_progress(state)
 
     return result
@@ -380,6 +436,7 @@ async def run_offline_throughput_benchmark(
     output_len: int = 128,
     timeout_s: int = 600,
     gpu_snapshot_fn=lambda: {},
+    on_progress_line: Callable[[str], None] | None = None,
 ) -> ThroughputResult:
     """Run `vllm bench throughput` (offline, own model instance) in a throwaway container.
 
@@ -412,16 +469,10 @@ async def run_offline_throughput_benchmark(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-        raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
+        ok, raw = await _run_streaming(cmd, timeout_s, on_progress_line)
         result.throughput_raw = raw
-        if proc.returncode != 0:
-            result.throughput_error = f"vllm bench throughput exited {proc.returncode}"
+        if not ok:
+            result.throughput_error = "vllm bench throughput failed (non-zero exit)"
         else:
             result.throughput = _parse_vllm_benchmark_output(raw)
             result.throughput_passed = True

@@ -187,6 +187,7 @@ export interface TestJob {
   served_name: string | null;
   state: "idle" | "running" | "done" | "error";
   phase: "starting" | "serving" | "evaluation" | "complete" | null;
+  progress: string | null; // latest tqdm-style line from vllm bench serve / lm-eval, if any
   experimental_cleared: boolean;
   started_at: number | null;
   finished_at: number | null;
@@ -217,6 +218,7 @@ export interface ThroughputJob {
   served_name: string | null;
   state: "idle" | "running" | "done" | "error";
   phase: "stopping" | "draining" | "benchmarking" | "reloading" | null;
+  progress: string | null; // latest tqdm-style line from vllm bench throughput, if any
   reload_ok: boolean | null;
   started_at: number | null;
   finished_at: number | null;

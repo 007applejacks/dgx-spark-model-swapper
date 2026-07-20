@@ -87,7 +87,8 @@ _dl_lock = asyncio.Lock()
 # A single global test run (stability battery against the loaded model).
 TEST: dict[str, Any] = {
     "id": 0, "model_id": None, "served_name": None, "state": "idle",
-    "phase": None,  # starting | serving | evaluation | complete — from benchmarks.py's on_progress
+    "phase": None,     # starting | serving | evaluation | complete — from benchmarks.py's on_progress
+    "progress": None,  # latest tqdm-style line (vllm bench serve / lm-eval), if any
     "tests": [], "report": {}, "experimental_cleared": False,
     "started_at": None, "finished_at": None,
 }
@@ -100,6 +101,7 @@ _test_lock = asyncio.Lock()
 THROUGHPUT: dict[str, Any] = {
     "id": 0, "model_id": None, "served_name": None, "state": "idle",
     "phase": None,          # stopping | draining | benchmarking | reloading
+    "progress": None,       # latest tqdm-style line from vllm bench throughput, if any
     "result": {}, "reload_ok": None,
     "started_at": None, "finished_at": None,
 }
@@ -1314,7 +1316,7 @@ def _set_experimental(path: Path, value: str) -> None:
 
 def _test_public() -> dict[str, Any]:
     return {k: TEST[k] for k in
-            ("id", "model_id", "served_name", "state", "phase", "experimental_cleared",
+            ("id", "model_id", "served_name", "state", "phase", "progress", "experimental_cleared",
              "started_at", "finished_at")} | {
         "benchmark": TEST.get("benchmark", {}), "report": TEST.get("report", {})}
 
@@ -1336,8 +1338,8 @@ async def api_test(_body: dict[str, Any] | None = None) -> dict[str, Any]:
         if TEST["state"] == "running":
             raise HTTPException(409, "a test run is already in progress")
         TEST.update({"id": TEST["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
-                     "state": "running", "phase": "starting", "benchmark": {}, "report": {},
-                     "experimental_cleared": False,
+                     "state": "running", "phase": "starting", "progress": None,
+                     "benchmark": {}, "report": {}, "experimental_cleared": False,
                      "started_at": int(time.time()), "finished_at": None})
     asyncio.create_task(_run_tests(cur["model_id"], cur["served_name"], model_repo))
     return {"accepted": True, "test": _test_public()}
@@ -1360,6 +1362,7 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
         TEST["benchmark"] = benchmarks.benchmark_result_to_dict(r) if r else {}
         TEST["report"] = state.get("report", {})
         TEST["phase"] = state.get("phase")
+        TEST["progress"] = state.get("progress")
 
     try:
         result = await benchmarks.run_full_benchmark_suite(
@@ -1385,6 +1388,7 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
         TEST["state"] = "error"
     finally:
         TEST["phase"] = None
+        TEST["progress"] = None
         TEST["finished_at"] = int(time.time())
 
 
@@ -1405,7 +1409,7 @@ async def _wait_gpu_idle(timeout_s: int) -> bool:
 
 def _throughput_public() -> dict[str, Any]:
     return {k: THROUGHPUT[k] for k in
-            ("id", "model_id", "served_name", "state", "phase", "reload_ok",
+            ("id", "model_id", "served_name", "state", "phase", "progress", "reload_ok",
              "started_at", "finished_at")} | {"result": THROUGHPUT.get("result", {})}
 
 
@@ -1436,7 +1440,7 @@ async def api_benchmark_throughput(_body: dict[str, Any] | None = None) -> dict[
             raise HTTPException(409, "a throughput benchmark is already in progress")
         THROUGHPUT.update({
             "id": THROUGHPUT["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
-            "state": "running", "phase": "stopping", "result": {}, "reload_ok": None,
+            "state": "running", "phase": "stopping", "progress": None, "result": {}, "reload_ok": None,
             "started_at": int(time.time()), "finished_at": None,
         })
     asyncio.create_task(_run_throughput_benchmark(
@@ -1468,9 +1472,11 @@ async def _run_throughput_benchmark(
 
         # 3. Run the offline throughput benchmark against a throwaway standalone instance.
         THROUGHPUT["phase"] = "benchmarking"
+        THROUGHPUT["progress"] = None
         result = await benchmarks.run_offline_throughput_benchmark(
             vllm_image=VLLM_IMAGE, hf_cache_vol=HF_CACHE_VOL, model_repo=model_repo,
             model_id=model_id, gpu_snapshot_fn=_gpu_state,
+            on_progress_line=lambda line: THROUGHPUT.__setitem__("progress", line),
         )
         THROUGHPUT["result"] = benchmarks.throughput_result_to_dict(result)
 
@@ -1501,6 +1507,7 @@ async def _run_throughput_benchmark(
         THROUGHPUT["state"] = "error"
     finally:
         THROUGHPUT["phase"] = None
+        THROUGHPUT["progress"] = None
         THROUGHPUT["finished_at"] = int(time.time())
 
 
