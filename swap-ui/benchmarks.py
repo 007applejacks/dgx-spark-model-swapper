@@ -182,7 +182,10 @@ async def run_vllm_serving_benchmark(
         "docker", "exec", "-e", "VLLM_USE_V1=1", _serving_container(model),
         "vllm", "bench", "serve",
         "--base-url", base_url,
-        "--model", model,
+        # No --model: that's the HF repo/tokenizer path to vLLM's bench tool, not just a label —
+        # passing the served name here made it try (and 404) fetching "nemotron-cascade-2-30b-a3b"
+        # from huggingface.co. Omitting it makes the tool fetch the actual served model from the
+        # server's own /v1/models, which is exactly what we want (whatever's currently loaded).
         "--num-prompts", str(config.serving_requests),
         "--max-concurrency", str(config.serving_concurrency),
         "--input-len", str(config.serving_input_len),
