@@ -171,10 +171,11 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
   const open = job !== null && job.state !== "idle";
   const benchmark = job?.benchmark || job?.report;
   const running = job?.state === "running";
-  const currentPhase = benchmark?.config ?
-    (benchmark.serving_error === null && benchmark.evaluation_error === null ? "done" :
-     benchmark.evaluation_error !== null || (benchmark.evaluation && !benchmark.evaluation_error) ? "evaluation" :
-     "serving") : "starting";
+  // job.phase is the real signal from the backend (benchmarks.py's on_progress) — serving_error/
+  // evaluation_error are BOTH `null` before a phase has even started (that's just the dataclass
+  // default) as well as after it passes, so deriving "which phase is active" from them can't
+  // distinguish "not started yet" from "already passed"; it read as "done" from the first poll.
+  const currentPhase = job?.phase ?? "starting";
 
   const overall = running
     ? { tone: "amber" as const, label: "Running", Icon: Loader2, spin: true }

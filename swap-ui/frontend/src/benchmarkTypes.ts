@@ -43,6 +43,7 @@ export interface TestJob {
   model_id: string | null;
   served_name: string | null;
   state: "idle" | "running" | "done" | "error";
+  phase: "starting" | "serving" | "evaluation" | "complete" | null;
   experimental_cleared: boolean;
   started_at: number | null;
   finished_at: number | null;

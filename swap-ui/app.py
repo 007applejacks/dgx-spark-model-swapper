@@ -87,6 +87,7 @@ _dl_lock = asyncio.Lock()
 # A single global test run (stability battery against the loaded model).
 TEST: dict[str, Any] = {
     "id": 0, "model_id": None, "served_name": None, "state": "idle",
+    "phase": None,  # starting | serving | evaluation | complete — from benchmarks.py's on_progress
     "tests": [], "report": {}, "experimental_cleared": False,
     "started_at": None, "finished_at": None,
 }
@@ -1313,7 +1314,7 @@ def _set_experimental(path: Path, value: str) -> None:
 
 def _test_public() -> dict[str, Any]:
     return {k: TEST[k] for k in
-            ("id", "model_id", "served_name", "state", "experimental_cleared",
+            ("id", "model_id", "served_name", "state", "phase", "experimental_cleared",
              "started_at", "finished_at")} | {
         "benchmark": TEST.get("benchmark", {}), "report": TEST.get("report", {})}
 
@@ -1335,7 +1336,8 @@ async def api_test(_body: dict[str, Any] | None = None) -> dict[str, Any]:
         if TEST["state"] == "running":
             raise HTTPException(409, "a test run is already in progress")
         TEST.update({"id": TEST["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
-                     "state": "running", "benchmark": {}, "report": {}, "experimental_cleared": False,
+                     "state": "running", "phase": "starting", "benchmark": {}, "report": {},
+                     "experimental_cleared": False,
                      "started_at": int(time.time()), "finished_at": None})
     asyncio.create_task(_run_tests(cur["model_id"], cur["served_name"], model_repo))
     return {"accepted": True, "test": _test_public()}
@@ -1350,9 +1352,14 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
     def on_update(state: dict[str, Any]) -> None:
         # state["result"] is a live BenchmarkResult dataclass, not yet JSON-safe — convert on every
         # progress tick, not just at the end, so a status poll mid-run doesn't 500 trying to encode it.
+        # state["phase"] is the ONLY reliable way to know which phase is currently running — the
+        # result's own error fields are `None` both before a phase starts and after it passes, so
+        # the frontend can't derive "which phase is active" from them (that's exactly the bug this
+        # forwarding fixes: the dialog looked frozen because it had no real phase signal at all).
         r = state.get("result")
         TEST["benchmark"] = benchmarks.benchmark_result_to_dict(r) if r else {}
         TEST["report"] = state.get("report", {})
+        TEST["phase"] = state.get("phase")
 
     try:
         result = await benchmarks.run_full_benchmark_suite(
@@ -1365,7 +1372,7 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
         )
         TEST["benchmark"] = benchmarks.benchmark_result_to_dict(result) if result else {}
         TEST["report"] = TEST["benchmark"]
-        
+
         # All non-error phases passed → clear the experimental flag, but ONLY if it was set
         if result and result.all_passed and model_id:
             p = _env_path_for(model_id)
@@ -1377,6 +1384,7 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
         TEST["report"] = {"error": str(exc)}
         TEST["state"] = "error"
     finally:
+        TEST["phase"] = None
         TEST["finished_at"] = int(time.time())
 
 
