@@ -240,7 +240,10 @@ async def run_lm_eval_harness(
         # CLI already forwards --batch_size into the model constructor, and having it in both
         # places raised "got multiple values for keyword argument 'batch_size'".
         "--model_args",
-        f"base_url={base_url}/v1,model={model},tokenizer={model_repo},max_gen_toks={config.serving_output_len}",
+        # base_url must be the full completions endpoint, not just the API root — the class
+        # default is "https://api.openai.com/v1/completions"; passing just ".../v1" 404s since
+        # lm-eval doesn't append "/completions" itself.
+        f"base_url={base_url}/v1/completions,model={model},tokenizer={model_repo},max_gen_toks={config.serving_output_len}",
         "--tasks", tasks,
         "--batch_size", str(config.eval_batch_size),
         "--output_path", "-",  # stdout
