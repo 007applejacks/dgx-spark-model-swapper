@@ -122,9 +122,27 @@ def _parse_vllm_benchmark_output(output: str) -> dict[str, Any]:
     for line in output.splitlines():
         line = line.strip()
         if "Throughput:" in line or "throughput:" in line.lower():
-            parts = line.split(":")
-            if len(parts) > 1:
-                result["throughput_tok_s"] = _extract_float(parts[1])
+            # `vllm bench throughput`'s summary line has THREE numbers, e.g.:
+            #   "Throughput: 0.27 requests/s, 311.76 total tokens/s, 34.64 output tokens/s"
+            # Naively taking the first float after "Throughput:" (the old code) silently grabbed
+            # requests/s instead of the actual generation rate — a real bug caught because 0.27
+            # tok/s was implausibly ~100x slower than this same model class gets elsewhere.
+            m = re.search(
+                r"Throughput:\s*([\d.]+)\s*requests/s,\s*([\d.]+)\s*total tokens/s,"
+                r"\s*([\d.]+)\s*output tokens/s",
+                line,
+            )
+            if m:
+                result["requests_per_s"] = float(m.group(1))
+                result["total_tokens_per_s"] = float(m.group(2))
+                result["throughput_tok_s"] = float(m.group(3))
+            else:
+                # Unknown/older format — fall back to the last number on the line (usually the
+                # most specific/rightmost metric in these summaries) rather than the first, which
+                # is what caused this bug in the first place.
+                nums = re.findall(r"[\d.]+", line)
+                if nums:
+                    result["throughput_tok_s"] = float(nums[-1])
         elif "Latency" in line and ("avg" in line.lower() or "mean" in line.lower()):
             result["avg_latency_ms"] = _extract_float(line)
         elif "TTFT" in line or "Time to first token" in line:
