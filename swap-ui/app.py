@@ -1326,7 +1326,10 @@ def api_test_status() -> dict[str, Any]:
 
 async def _run_tests(model_id: str | None, served_name: str) -> None:
     def on_update(state: dict[str, Any]) -> None:
-        TEST["benchmark"] = state.get("result", {})
+        # state["result"] is a live BenchmarkResult dataclass, not yet JSON-safe — convert on every
+        # progress tick, not just at the end, so a status poll mid-run doesn't 500 trying to encode it.
+        r = state.get("result")
+        TEST["benchmark"] = benchmarks.benchmark_result_to_dict(r) if r else {}
         TEST["report"] = state.get("report", {})
     
     try:

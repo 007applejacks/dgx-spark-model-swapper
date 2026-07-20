@@ -337,7 +337,7 @@ async def run_full_benchmark_suite(
         state["phase"] = "serving"
         on_progress(state)
     
-    serving_ = await run_vllm_serving_benchmark(base_url, model, config, gpu_snapshot_fn)
+    serving = await run_vllm_serving_benchmark(base_url, model, config, gpu_snapshot_fn)
     result.serving, result.serving_raw, result.serving_error = serving
     result.serving_passed = result.serving_error is None and result.serving.get("failed_requests", 0) == 0
     
