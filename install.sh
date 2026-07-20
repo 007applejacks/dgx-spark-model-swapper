@@ -285,3 +285,71 @@ EOF
     sudo chmod 640 /etc/gb10-agent.env
   fi
 }
+
+install_model_configs() {
+  if [ -z "${CONFIGS_REPO_URL:-}" ]; then
+    log "No model-configs repo URL given — skipping (the dashboard will show an empty registry until you add one)"
+    return 0
+  fi
+  if [ -d "$CONFIGS_REPO_DEST" ]; then
+    log "model-configs already present at ${CONFIGS_REPO_DEST} — leaving it untouched"
+    return 0
+  fi
+  log "Cloning model-configs into ${CONFIGS_REPO_DEST}"
+  git clone "$CONFIGS_REPO_URL" "$CONFIGS_REPO_DEST"
+}
+
+wait_for_health() {  # <url> <label> [timeout_s]
+  local url="$1" label="$2" timeout="${3:-60}" waited=0
+  while [ "$waited" -lt "$timeout" ]; do
+    curl -fsS -o /dev/null "$url" 2>/dev/null && { log "${label} is healthy (${url})"; return 0; }
+    sleep 2; waited=$((waited+2))
+  done
+  die "${label} did not become healthy at ${url} within ${timeout}s — check: sudo journalctl -u ${label} -n 50"
+}
+
+verify_and_summarize() {
+  wait_for_health "http://localhost:${SWAP_PORT}/health" "gb10-swap"
+  [ "$INSTALL_AGENT" = "yes" ] && wait_for_health "http://localhost:${AGENT_PORT}/health" "gb10-agent"
+
+  echo
+  echo "============================================================"
+  echo " gb10 Model Swapper is running."
+  echo "============================================================"
+  echo " Dashboard:  http://localhost:${SWAP_PORT}   (also reachable on your LAN)"
+  [ "$INSTALL_AGENT" = "yes" ] && echo " Agent:      http://localhost:${AGENT_PORT}/health"
+  echo
+  echo " Manual follow-ups (not automated by this installer):"
+  echo
+  echo " 1. Tailnet HTTPS (optional, needs tailscale already logged into a tailnet):"
+  echo "      sudo tailscale serve --bg ${SWAP_PORT}"
+  if [ "$INSTALL_AGENT" = "yes" ]; then
+    echo "      sudo tailscale serve --bg --set-path /agent http://127.0.0.1:${AGENT_PORT}"
+  fi
+  echo
+  echo " 2. Passwordless reboot button (needed for the dashboard's Reboot action):"
+  echo "      echo '${SWAP_USER} ALL=(root) NOPASSWD: /sbin/reboot' | sudo tee /etc/sudoers.d/gb10-swap-reboot"
+  echo "      sudo chmod 440 /etc/sudoers.d/gb10-swap-reboot"
+  echo
+  echo " 3. HuggingFace token (add later for authenticated/full-speed model downloads):"
+  echo "      sudo tee /etc/gb10-swap.env <<< 'HF_TOKEN=hf_xxxxxxxx'"
+  echo "      sudo systemctl restart gb10-swap"
+  echo "============================================================"
+}
+
+main() {
+  load_config
+  check_prereqs
+  collect_config
+  CONFIGS_REPO_DEST="$(dirname "$INSTALL_DIR")/gb10-model-configs"
+  OUT_DIR_HOST_DEST="$(dirname "$INSTALL_DIR")/gb10-out"
+  write_containers_local_env
+  install_swapui
+  install_agent
+  install_model_configs
+  verify_and_summarize
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
