@@ -226,3 +226,62 @@ EOF
 
   render_boot_unit
 }
+
+install_agent() {
+  if [ "$INSTALL_AGENT" != "yes" ]; then
+    log "Skipping gb10-agent (not requested)"
+    return 0
+  fi
+  log "Installing gb10-agent"
+
+  if ! id "$AGENT_USER" >/dev/null 2>&1; then
+    log "Creating sandboxed user ${AGENT_USER}"
+    sudo useradd --create-home --home-dir "/home/${AGENT_USER}" --shell /bin/bash --user-group \
+      --comment "agent tool-execution sandbox (no sudo/docker)" "$AGENT_USER"
+    sudo passwd -l "$AGENT_USER"
+    sudo chmod 750 "/home/${AGENT_USER}"
+  else
+    log "User ${AGENT_USER} already exists"
+  fi
+
+  local agent_home
+  agent_home="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
+
+  log "Syncing agent/ into ${agent_home}/agent"
+  sudo -u "$AGENT_USER" mkdir -p "${agent_home}/agent"
+  sudo rsync -a --delete --chown="${AGENT_USER}:${AGENT_USER}" "${HERE}/agent/" "${agent_home}/agent/"
+
+  if [ ! -d "${agent_home}/agent/.venv" ]; then
+    log "Creating gb10-agent venv"
+    sudo -u "$AGENT_USER" -H bash "${agent_home}/agent/bootstrap.sh"
+  else
+    log "gb10-agent venv already exists — refreshing dependencies"
+    sudo -u "$AGENT_USER" "${agent_home}/agent/.venv/bin/pip" install --upgrade -r "${agent_home}/agent/requirements.txt"
+  fi
+
+  local rendered_unit="/tmp/gb10-agent.service.rendered.$$"
+  render_template "${HERE}/systemd/gb10-agent.service" "$rendered_unit" \
+    "AGENT_USER=${AGENT_USER}" \
+    "AGENT_HOME=${agent_home}" \
+    "AGENT_PORT=${AGENT_PORT}" \
+    "VLLM_SERVE_PORT=${VLLM_SERVE_PORT}"
+
+  if ! sudo test -f /etc/systemd/system/gb10-agent.service \
+     || ! cmp -s "$rendered_unit" <(sudo cat /etc/systemd/system/gb10-agent.service 2>/dev/null); then
+    log "Installing/updating gb10-agent.service"
+    sudo cp "$rendered_unit" /etc/systemd/system/gb10-agent.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now gb10-agent
+  else
+    log "gb10-agent.service unchanged — leaving the running service alone"
+  fi
+  rm -f "$rendered_unit"
+
+  if [ ! -f /etc/gb10-agent.env ]; then
+    sudo tee /etc/gb10-agent.env >/dev/null <<'EOF'
+# No secrets required by default. Add environment overrides here if a future tool needs them.
+EOF
+    sudo chown root:root /etc/gb10-agent.env
+    sudo chmod 640 /etc/gb10-agent.env
+  fi
+}
