@@ -140,28 +140,53 @@ export interface DownloadJob {
   log_tail: string[];
 }
 
-export interface TestCase {
-  name: string;
-  title: string;
-  targets: string;
-  status: "pending" | "running" | "pass" | "fail" | "skip";
-  detail: string;
-  metrics: Record<string, string | number | null>;
+// --- Standard benchmark types (vLLM + lm-eval-harness) ---
+
+export interface BenchmarkConfig {
+  serving_requests: number;
+  serving_concurrency: number;
+  serving_input_len: number;
+  serving_output_len: number;
+  serving_dataset: string;
+  throughput_num_prompts: number;
+  throughput_input_len: number;
+  throughput_output_len: number;
+  eval_tasks: string[];
+  eval_limit: number | null;
+  eval_batch_size: number;
+  timeout_serving: number;
+  timeout_throughput: number;
+  timeout_eval: number;
 }
 
-export interface TestReport {
-  summary?: {
-    passed: number;
-    ran: number;
-    skipped: number;
-    all_passed: boolean;
-    decode_tok_s: number | null;
-    tool_gate: string | null;
-    empty_responses?: string;
-  };
-  finish_reasons?: Record<string, number>;
-  gpu?: Gpu;
-  error?: string;
+export interface BenchmarkPhaseResult {
+  // Parsed metrics from the benchmark
+  [key: string]: any;
+  // Raw output for debugging
+  _raw?: string;
+  _error?: string;
+  _passed?: boolean;
+}
+
+export interface BenchmarkResult {
+  model_id: string;
+  served_name: string;
+  timestamp: number;
+  config: BenchmarkConfig;
+  serving: BenchmarkPhaseResult;
+  serving_raw: string;
+  serving_error: string | null;
+  serving_passed: boolean;
+  throughput: BenchmarkPhaseResult;
+  throughput_raw: string;
+  throughput_error: string | null;
+  throughput_passed: boolean;
+  evaluation: BenchmarkPhaseResult;
+  evaluation_raw: string;
+  evaluation_error: string | null;
+  evaluation_passed: boolean;
+  gpu_snapshot: Gpu;
+  all_passed: boolean;
 }
 
 export interface TestJob {
@@ -172,8 +197,8 @@ export interface TestJob {
   experimental_cleared: boolean;
   started_at: number | null;
   finished_at: number | null;
-  tests: TestCase[];
-  report: TestReport;
+  benchmark: BenchmarkResult;
+  report?: BenchmarkResult; // backward compat alias
 }
 
 export interface UpdateJob {

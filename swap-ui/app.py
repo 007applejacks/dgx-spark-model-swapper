@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-import stability
+import benchmarks
 
 # --- Paths & config -------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent            # .../swap-ui
@@ -1281,7 +1281,7 @@ async def _run_download(repo: str) -> None:
         DL["finished_at"] = int(time.time())
 
 
-# --- stability tests --------------------------------------------------------------------------
+# --- benchmark tests (vLLM standard + lm-eval-harness) --------------------------------------
 def _set_experimental(path: Path, value: str) -> None:
     """Rewrite EXPERIMENTAL=<value> in a recipe .env in place (used to clear the flag on a pass)."""
     out: list[str] = []
@@ -1301,7 +1301,7 @@ def _test_public() -> dict[str, Any]:
     return {k: TEST[k] for k in
             ("id", "model_id", "served_name", "state", "experimental_cleared",
              "started_at", "finished_at")} | {
-        "tests": TEST.get("tests", []), "report": TEST.get("report", {})}
+        "benchmark": TEST.get("benchmark", {}), "report": TEST.get("report", {})}
 
 
 @app.post("/api/test")
@@ -1313,7 +1313,7 @@ async def api_test(_body: dict[str, Any] | None = None) -> dict[str, Any]:
         if TEST["state"] == "running":
             raise HTTPException(409, "a test run is already in progress")
         TEST.update({"id": TEST["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
-                     "state": "running", "tests": [], "report": {}, "experimental_cleared": False,
+                     "state": "running", "benchmark": {}, "report": {}, "experimental_cleared": False,
                      "started_at": int(time.time()), "finished_at": None})
     asyncio.create_task(_run_tests(cur["model_id"], cur["served_name"]))
     return {"accepted": True, "test": _test_public()}
@@ -1326,16 +1326,22 @@ def api_test_status() -> dict[str, Any]:
 
 async def _run_tests(model_id: str | None, served_name: str) -> None:
     def on_update(state: dict[str, Any]) -> None:
-        TEST["tests"] = state["tests"]
-        TEST["report"] = state["report"]
+        TEST["benchmark"] = state.get("result", {})
+        TEST["report"] = state.get("report", {})
+    
     try:
-        state = await stability.run_suite(
-            f"http://localhost:{SERVE_PORT}", served_name, _gpu_state, on_update)
-        TEST["tests"] = state["tests"]
-        TEST["report"] = state["report"]
-        # All non-skipped tests passed → clear the experimental flag, but ONLY if it was set (don't
-        # rewrite an already-stable recipe — that would needlessly mark a committed model as a draft).
-        if state["report"].get("summary", {}).get("all_passed") and model_id:
+        result = await benchmarks.run_full_benchmark_suite(
+            f"http://localhost:{SERVE_PORT}",
+            served_name,
+            model_id or "",
+            gpu_snapshot_fn=_gpu_state,
+            on_progress=on_update,
+        )
+        TEST["benchmark"] = benchmarks.benchmark_result_to_dict(result) if result else {}
+        TEST["report"] = TEST["benchmark"]
+        
+        # All non-error phases passed → clear the experimental flag, but ONLY if it was set
+        if result and result.all_passed and model_id:
             p = _env_path_for(model_id)
             if p is not None and _parse_env_file(p).get("EXPERIMENTAL", "0") == "1":
                 _set_experimental(p, "0")

@@ -128,12 +128,12 @@ export default function App() {
         // just finished: surface it once. Subsequent polls (same id) won't reopen a closed panel.
         prevTestId.current = t.id;
         setTestJob(t);
-        const ok = t.report?.summary?.all_passed;
+        const ok = t.benchmark?.all_passed ?? t.report?.all_passed;
         setNotice({
           tone: ok ? "signal" : "coral",
           text: ok
-            ? `${t.served_name} passed all stability tests${t.experimental_cleared ? " — experimental cleared" : ""}`
-            : `${t.served_name} failed stability tests`,
+            ? `${t.served_name} passed all benchmarks${t.experimental_cleared ? " — experimental cleared" : ""}`
+            : `${t.served_name} failed benchmarks`,
         });
         void loadModels();
       }

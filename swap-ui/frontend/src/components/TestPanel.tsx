@@ -2,11 +2,11 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   X, CheckCircle2, XCircle, MinusCircle, Loader2, Circle, FlaskConical, ShieldCheck, Gauge,
 } from "lucide-react";
-import type { TestJob, TestCase } from "../api";
+import type { TestJob } from "../api";
 import { cn } from "../lib/cn";
 import { Eyebrow } from "./ui";
 
-function StatusIcon({ status }: { status: TestCase["status"] }) {
+function StatusIcon({ status }: { status: "pass" | "fail" | "running" | "skip" | "pending" }) {
   switch (status) {
     case "pass":
       return <CheckCircle2 className="h-4 w-4 text-signal" />;
@@ -31,36 +31,166 @@ function Tile({ label, value, tone = "ink" }: { label: string; value: string; to
   );
 }
 
-function metricChips(m: Record<string, string | number | null>) {
-  return Object.entries(m)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => (
-      <span key={k} className="rounded border border-line bg-bg/60 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-        {k.replace(/_/g, " ")} <span className="text-ink">{String(v)}</span>
-      </span>
-    ));
+function MetricRow({ label, value, unit = "" }: { label: string; value: string | number | null; unit?: string }) {
+  if (value === null || value === undefined || value === "") return null;
+  return (
+    <div className="flex items-baseline gap-1 font-mono text-[11px] text-muted">
+      <span>{label}</span>
+      <span className="text-ink font-medium">{value}</span>
+      {unit && <span>{unit}</span>}
+    </div>
+  );
+}
+
+function BenchmarkPhase({ 
+  title, 
+  phase, 
+  passed, 
+  error, 
+  metrics, 
+  raw, 
+  currentPhase 
+}: { 
+  title: string; 
+  phase: string; 
+  passed: boolean; 
+  error: string | null; 
+  metrics: Record<string, any>; 
+  raw: string; 
+  currentPhase: string;
+}) {
+  const isRunning = currentPhase === phase;
+  
+  const status = error ? "fail" : passed ? "pass" : isRunning ? "running" : "pending";
+  
+  return (
+    <div className={cn(
+      "rounded-lg border px-3.5 py-2.5 transition-colors",
+      error ? "border-coral/40 bg-coral/[0.05]" : 
+      passed ? "border-signal/30 bg-signal/[0.05]" : 
+      isRunning ? "border-amber/40 bg-amber/[0.05]" : "border-line bg-panel2/60"
+    )}>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <StatusIcon status={status} />
+          <span className="font-display text-sm font-medium text-ink">{title}</span>
+          {isRunning && <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-amber">running…</span>}
+        </div>
+        <div className="pl-7 flex flex-wrap items-center gap-1.5 sm:pl-0 sm:text-right">
+          {error && <span className="font-mono text-[11px] text-coral">Error: {error.slice(0, 80)}</span>}
+          {!error && metrics && Object.keys(metrics).length > 0 && (
+            <>
+              {metrics.throughput_tok_s && (
+                <MetricRow label="Throughput" value={metrics.throughput_tok_s.toFixed(1)} unit=" tok/s" />
+              )}
+              {metrics.avg_latency_ms && (
+                <MetricRow label="Avg Latency" value={metrics.avg_latency_ms.toFixed(1)} unit=" ms" />
+              )}
+              {metrics.ttft_ms && (
+                <MetricRow label="TTFT" value={metrics.ttft_ms.toFixed(1)} unit=" ms" />
+              )}
+              {metrics.successful_requests !== undefined && (
+                <MetricRow label="Success" value={metrics.successful_requests} />
+              )}
+              {metrics.failed_requests && metrics.failed_requests > 0 && (
+                <MetricRow label="Failed" value={metrics.failed_requests} />
+              )}
+              {Object.entries(metrics).map(([k, v]) => {
+                if (["throughput_tok_s", "avg_latency_ms", "ttft_ms", "successful_requests", "failed_requests"].includes(k)) return null;
+                return <MetricRow key={k} label={k.replace(/_/g, " ")} value={String(v)} />;
+              })}
+            </>
+          )}
+        </div>
+      </div>
+      {raw && (
+        <details className="mt-2">
+          <summary className="font-mono text-[10px] text-muted cursor-pointer">Raw output</summary>
+          <pre className="mt-1 rounded bg-bg/50 p-2 font-mono text-[10px] text-muted overflow-x-auto whitespace-pre-wrap">{raw.slice(0, 2000)}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function EvaluationResults({ evaluation, error, currentPhase }: { 
+  evaluation: Record<string, any>; 
+  error: string | null; 
+  currentPhase: string;
+}) {
+  const isRunning = currentPhase === "evaluation";
+  
+  if (!evaluation && !error) {
+    return (
+      <div className="rounded-lg border border-line bg-panel2/60 px-3.5 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <StatusIcon status={isRunning ? "running" : "pending"} />
+          <span className="font-display text-sm font-medium text-ink">Quality Evaluation (lm-eval-harness)</span>
+          {isRunning && <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-amber">running…</span>}
+        </div>
+      </div>
+    );
+  }
+  
+  const tasks = evaluation?.tasks || {};
+  const taskEntries = Object.entries(tasks);
+  
+  return (
+    <div className={cn(
+      "rounded-lg border px-3.5 py-2.5",
+      error ? "border-coral/40 bg-coral/[0.05]" : "border-line bg-panel2/60"
+    )}>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex items-center gap-2.5">
+          <StatusIcon status={error ? "fail" : isRunning ? "running" : taskEntries.length > 0 ? "pass" : "skip"} />
+          <span className="font-display text-sm font-medium text-ink">Quality Evaluation (lm-eval-harness)</span>
+          {isRunning && <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-amber">running…</span>}
+        </div>
+        {error && <span className="font-mono text-[11px] text-coral">Error: {error.slice(0, 100)}</span>}
+      </div>
+      
+      {taskEntries.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {taskEntries.map(([taskName, metrics]) => (
+            <div key={taskName} className="flex flex-wrap items-center gap-2 pl-7">
+              <span className="font-mono text-[11px] text-muted min-w-[120px]">{taskName}</span>
+              {Object.entries(metrics as Record<string, number>).map(([metric, value]) => (
+                <span key={metric} className="rounded border border-line bg-bg/60 px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                  {metric} <span className="text-ink">{typeof value === "number" ? value.toFixed(4) : value}</span>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () => void }) {
   const open = job !== null && job.state !== "idle";
-  const s = job?.report?.summary;
-  const gpu = job?.report?.gpu;
+  const benchmark = job?.benchmark || job?.report;
   const running = job?.state === "running";
+  const currentPhase = benchmark?.config ? 
+    (benchmark.serving_error === null && benchmark.throughput_error === null && benchmark.evaluation_error === null ? "done" :
+     benchmark.evaluation_error !== null || (benchmark.evaluation && !benchmark.evaluation_error) ? "evaluation" :
+     benchmark.throughput_error !== null || (benchmark.throughput && !benchmark.throughput_error) ? "throughput" :
+     "serving") : "starting";
 
   const overall = running
     ? { tone: "amber" as const, label: "Running", Icon: Loader2, spin: true }
-    : s?.all_passed
-      ? { tone: "signal" as const, label: "Stable", Icon: ShieldCheck, spin: false }
-      : { tone: "coral" as const, label: "Unstable", Icon: XCircle, spin: false };
+    : benchmark?.all_passed
+      ? { tone: "signal" as const, label: "All Passed", Icon: ShieldCheck, spin: false }
+      : { tone: "coral" as const, label: "Issues Found", Icon: XCircle, spin: false };
 
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[min(94vw,720px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-panel p-6 shadow-bay">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[min(94vw,880px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-panel p-6 shadow-bay">
           <div className="mb-5 flex items-start justify-between">
             <div>
-              <Eyebrow className="text-cyan">GB10 stability battery</Eyebrow>
+              <Eyebrow className="text-cyan">Standard benchmark suite</Eyebrow>
               <Dialog.Title className="mt-1 flex items-center gap-2 font-display text-xl font-bold text-ink">
                 <FlaskConical className="h-5 w-5 text-cyan" />
                 {job?.served_name || "model"}
@@ -88,57 +218,78 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
             </div>
           )}
 
-          {/* report tiles */}
+          {/* Summary tiles */}
           <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            <Tile label="Passed" value={s ? `${s.passed}/${s.ran}` : "—"} tone={s?.all_passed ? "signal" : s ? "coral" : "ink"} />
-            <Tile label="Decode" value={s?.decode_tok_s != null ? `${s.decode_tok_s} tok/s` : "—"} tone="cyan" />
-            <Tile label="Tool gate" value={s?.tool_gate || "—"} />
-            <Tile label="GPU mem" value={gpu?.mem_pct != null ? `${gpu.mem_pct}%` : "—"} />
+            <Tile 
+              label="Serving" 
+              value={benchmark?.serving_passed ? "✓" : benchmark?.serving_error ? "✗" : "⋯"} 
+              tone={benchmark?.serving_passed ? "signal" : benchmark?.serving_error ? "coral" : "amber"} 
+            />
+            <Tile 
+              label="Throughput" 
+              value={benchmark?.throughput_passed ? "✓" : benchmark?.throughput_error ? "✗" : "⋯"} 
+              tone={benchmark?.throughput_passed ? "signal" : benchmark?.throughput_error ? "coral" : "amber"} 
+            />
+            <Tile 
+              label="Quality" 
+              value={benchmark?.evaluation_passed ? "✓" : benchmark?.evaluation_error ? "✗" : "⋯"} 
+              tone={benchmark?.evaluation_passed ? "signal" : benchmark?.evaluation_error ? "coral" : "amber"} 
+            />
+            <Tile 
+              label="GPU Mem" 
+              value={benchmark?.gpu_snapshot?.mem_pct != null ? `${benchmark.gpu_snapshot.mem_pct}%` : "—"} 
+              tone="cyan" 
+            />
           </div>
 
-          {job?.report?.error && (
-            <p className="mb-4 font-mono text-[12px] text-coral">Error: {job.report.error}</p>
+          {benchmark?.serving_error && (
+            <p className="mb-4 font-mono text-[12px] text-coral">Serving Error: {benchmark.serving_error}</p>
+          )}
+          {benchmark?.throughput_error && (
+            <p className="mb-4 font-mono text-[12px] text-coral">Throughput Error: {benchmark.throughput_error}</p>
+          )}
+          {benchmark?.evaluation_error && (
+            <p className="mb-4 font-mono text-[12px] text-coral">Evaluation Error: {benchmark.evaluation_error}</p>
           )}
 
-          {/* per-test rows */}
-          <div className="space-y-1.5">
-            {(job?.tests || []).map((t) => (
-              <div
-                key={t.name}
-                className={cn(
-                  "rounded-lg border px-3.5 py-2.5",
-                  t.status === "fail" ? "border-coral/40 bg-coral/[0.05]" : "border-line bg-panel2/60",
-                )}
-              >
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <StatusIcon status={t.status} />
-                    <span className="font-display text-sm font-medium text-ink">{t.title}</span>
-                  </div>
-                  <span className="pl-7 font-mono text-[10px] uppercase tracking-[0.12em] text-muted sm:pl-0 sm:text-right">
-                    catches: {t.targets}
-                  </span>
-                </div>
-                {(t.detail || Object.keys(t.metrics || {}).length > 0) && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-7">
-                    {t.detail && <span className="font-mono text-[11px] text-muted">{t.detail}</span>}
-                    {metricChips(t.metrics || {})}
-                  </div>
-                )}
-              </div>
-            ))}
+          {/* Phase results */}
+          <div className="space-y-3">
+            {benchmark && (
+              <>
+                <BenchmarkPhase
+                  title="Serving Benchmark (vLLM benchmark_serving)"
+                  phase="serving"
+                  passed={benchmark.serving_passed}
+                  error={benchmark.serving_error}
+                  metrics={benchmark.serving}
+                  raw={benchmark.serving_raw}
+                  currentPhase={currentPhase}
+                />
+                <BenchmarkPhase
+                  title="Throughput Benchmark (vLLM benchmark_throughput)"
+                  phase="throughput"
+                  passed={benchmark.throughput_passed}
+                  error={benchmark.throughput_error}
+                  metrics={benchmark.throughput}
+                  raw={benchmark.throughput_raw}
+                  currentPhase={currentPhase}
+                />
+                <EvaluationResults
+                  evaluation={benchmark.evaluation}
+                  error={benchmark.evaluation_error}
+                  currentPhase={currentPhase}
+                />
+              </>
+            )}
           </div>
 
-          {gpu && (
+          {benchmark?.gpu_snapshot && (
             <div className="mt-4 flex items-center gap-4 border-t border-line pt-3 font-mono text-[11px] text-muted">
               <Gauge className="h-3.5 w-3.5" />
-              <span>GPU {gpu.name}</span>
-              {gpu.util_pct != null && <span>util {gpu.util_pct}%</span>}
-              {gpu.temp_c != null && <span>{gpu.temp_c}°C</span>}
-              {job?.report?.finish_reasons && (
-                <span>finish: {Object.entries(job.report.finish_reasons).map(([k, v]) => `${k}×${v}`).join("  ")}</span>
-              )}
-              {s?.empty_responses && <span>empty: {s.empty_responses}</span>}
+              <span>GPU {benchmark.gpu_snapshot.name}</span>
+              {benchmark.gpu_snapshot.util_pct != null && <span>util {benchmark.gpu_snapshot.util_pct}%</span>}
+              {benchmark.gpu_snapshot.temp_c != null && <span>{benchmark.gpu_snapshot.temp_c}°C</span>}
+              {benchmark.gpu_snapshot.mem_pct != null && <span>mem {benchmark.gpu_snapshot.mem_pct}%</span>}
             </div>
           )}
         </Dialog.Content>
