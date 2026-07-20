@@ -5,3 +5,5 @@ __pycache__/
 /swap-ui/frontend/dist/
 /models/
 .DS_Store
+.install-config
+/manifests/containers.local.env
