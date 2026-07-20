@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -165,6 +166,21 @@ def _parse_lm_eval_output(output: str) -> dict[str, Any]:
     return result
 
 
+def _docker_exec_container(model: str) -> str:
+    """swap-vllm-<served-name> is the project-wide container naming convention (see
+    manifests/containers.env, gb10-swap.sh) — no separate lookup needed."""
+    return f"swap-vllm-{model}"
+
+
+def _vllm_module_cmd(container: str, module: str, args: list[str]) -> list[str]:
+    """vllm (the pip package, including vllm.benchmarks.*) only exists inside the serving
+    container's own image — swap-ui's venv deliberately stays lightweight (fastapi/uvicorn/httpx +
+    lm-eval/datasets) and never installs vllm itself. Run the benchmark script via `docker exec`
+    into the already-running container instead, where `--base-url http://localhost:PORT` resolves
+    correctly (docker exec shares the container's network namespace, so localhost is itself)."""
+    return ["docker", "exec", "-e", "VLLM_USE_V1=1", container, "python3", "-m", module, *args]
+
+
 async def run_vllm_serving_benchmark(
     base_url: str,
     model: str,
@@ -174,8 +190,7 @@ async def run_vllm_serving_benchmark(
     """Run vLLM benchmark_serving.py against the running server."""
     # vLLM's benchmark_serving.py supports --base-url for remote servers
     # We need to run it with the model name as served on the server
-    cmd = [
-        "python", "-m", "vllm.benchmarks.benchmark_serving",
+    cmd = _vllm_module_cmd(_docker_exec_container(model), "vllm.benchmarks.benchmark_serving", [
         "--base-url", base_url,
         "--model", model,
         "--num-prompts", str(config.serving_requests),
@@ -184,14 +199,13 @@ async def run_vllm_serving_benchmark(
         "--output-len", str(config.serving_output_len),
         "--dataset-name", config.serving_dataset,
         "--output-json", "-",  # stdout
-    ]
-    
+    ])
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "VLLM_USE_V1": "1"},
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=config.timeout_serving
@@ -213,22 +227,20 @@ async def run_vllm_throughput_benchmark(
     gpu_snapshot_fn,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run vLLM benchmark_throughput.py against the running server."""
-    cmd = [
-        "python", "-m", "vllm.benchmarks.benchmark_throughput",
+    cmd = _vllm_module_cmd(_docker_exec_container(model), "vllm.benchmarks.benchmark_throughput", [
         "--base-url", base_url,
         "--model", model,
         "--num-prompts", str(config.throughput_num_prompts),
         "--input-len", str(config.throughput_input_len),
         "--output-len", str(config.throughput_output_len),
         "--output-json", "-",
-    ]
-    
+    ])
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "VLLM_USE_V1": "1"},
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=config.timeout_throughput
@@ -258,7 +270,7 @@ async def run_lm_eval_harness(
     tasks = ",".join(config.eval_tasks)
     
     cmd = [
-        "python", "-m", "lm_eval",
+        sys.executable, "-m", "lm_eval",
         "--model", "local-completions",
         "--model_args", f"base_url={base_url}/v1,model={model},max_gen_toks={config.serving_output_len},batch_size={config.eval_batch_size}",
         "--tasks", tasks,
