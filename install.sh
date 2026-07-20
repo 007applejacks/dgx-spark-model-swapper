@@ -253,7 +253,11 @@ install_agent() {
 
   if [ ! -d "${agent_home}/agent/.venv" ]; then
     log "Creating gb10-agent venv"
-    sudo -u "$AGENT_USER" -H bash "${agent_home}/agent/bootstrap.sh"
+    # bootstrap.sh refuses to run as anyone other than the user named by its own AGENT_USER env var
+    # (default "gb10-agent") — pass it through explicitly since `sudo -u` resets the environment,
+    # so reusing an existing sandbox account under a different name (e.g. a pre-existing "gx10")
+    # doesn't trip that guard.
+    sudo -u "$AGENT_USER" -H env AGENT_USER="$AGENT_USER" bash "${agent_home}/agent/bootstrap.sh"
   else
     log "gb10-agent venv already exists — refreshing dependencies"
     sudo -u "$AGENT_USER" "${agent_home}/agent/.venv/bin/pip" install --upgrade -r "${agent_home}/agent/requirements.txt"
