@@ -15,6 +15,13 @@ set -euo pipefail
 GB10_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "${GB10_DIR}/manifests/containers.env"
+# Untracked, installer-generated overrides (e.g. OUT_DIR_HOST localized to wherever install.sh put
+# it) — sourced AFTER containers.env so it wins for just the variables it sets. Never committed;
+# absent on a fresh checkout that hasn't been installed yet, so this is optional.
+if [ -r "${GB10_DIR}/manifests/containers.local.env" ]; then
+  # shellcheck disable=SC1091
+  . "${GB10_DIR}/manifests/containers.local.env"
+fi
 
 # Run a command on the box. Non-interactive, fail-fast. The command is passed as a
 # SINGLE argument so the remote shell runs it verbatim — do NOT add `bash -lc`
