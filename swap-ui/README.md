@@ -186,9 +186,3 @@ anywhere. Set this up before you need it.
 `gb10-swap.sh` records the last-loaded model to `~/.config/gb10-swap/last-model`. The
 `gb10-serve-boot.service` unit (in `../orchestration/`) reads it and restarts that model's container
 after a reboot, so the bay comes back to whatever you last loaded.
-
-## Notes / follow-ups
-
-- **Recipe changes**: a model's container is created once then start/stop-ed. If you change a model's
-  `*.env` recipe, remove its stale container on the box (`docker rm swap-vllm-<id>`) so the next swap
-  recreates it with the new flags.
