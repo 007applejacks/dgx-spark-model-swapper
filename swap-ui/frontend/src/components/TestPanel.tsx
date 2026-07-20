@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   X, CheckCircle2, XCircle, MinusCircle, Loader2, Circle, FlaskConical, ShieldCheck, Gauge,
 } from "lucide-react";
-import type { TestJob } from "../api";
+import type { TestJob, ThroughputJob } from "../api";
 import { cn } from "../lib/cn";
 import { Eyebrow } from "./ui";
 
@@ -171,10 +171,9 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
   const open = job !== null && job.state !== "idle";
   const benchmark = job?.benchmark || job?.report;
   const running = job?.state === "running";
-  const currentPhase = benchmark?.config ? 
-    (benchmark.serving_error === null && benchmark.throughput_error === null && benchmark.evaluation_error === null ? "done" :
+  const currentPhase = benchmark?.config ?
+    (benchmark.serving_error === null && benchmark.evaluation_error === null ? "done" :
      benchmark.evaluation_error !== null || (benchmark.evaluation && !benchmark.evaluation_error) ? "evaluation" :
-     benchmark.throughput_error !== null || (benchmark.throughput && !benchmark.throughput_error) ? "throughput" :
      "serving") : "starting";
 
   const overall = running
@@ -219,34 +218,26 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
           )}
 
           {/* Summary tiles */}
-          <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            <Tile 
-              label="Serving" 
-              value={benchmark?.serving_passed ? "✓" : benchmark?.serving_error ? "✗" : "⋯"} 
-              tone={benchmark?.serving_passed ? "signal" : benchmark?.serving_error ? "coral" : "amber"} 
+          <div className="mb-5 grid grid-cols-3 gap-2.5">
+            <Tile
+              label="Serving"
+              value={benchmark?.serving_passed ? "✓" : benchmark?.serving_error ? "✗" : "⋯"}
+              tone={benchmark?.serving_passed ? "signal" : benchmark?.serving_error ? "coral" : "amber"}
             />
-            <Tile 
-              label="Throughput" 
-              value={benchmark?.throughput_passed ? "✓" : benchmark?.throughput_error ? "✗" : "⋯"} 
-              tone={benchmark?.throughput_passed ? "signal" : benchmark?.throughput_error ? "coral" : "amber"} 
+            <Tile
+              label="Quality"
+              value={benchmark?.evaluation_passed ? "✓" : benchmark?.evaluation_error ? "✗" : "⋯"}
+              tone={benchmark?.evaluation_passed ? "signal" : benchmark?.evaluation_error ? "coral" : "amber"}
             />
-            <Tile 
-              label="Quality" 
-              value={benchmark?.evaluation_passed ? "✓" : benchmark?.evaluation_error ? "✗" : "⋯"} 
-              tone={benchmark?.evaluation_passed ? "signal" : benchmark?.evaluation_error ? "coral" : "amber"} 
-            />
-            <Tile 
-              label="GPU Mem" 
-              value={benchmark?.gpu_snapshot?.mem_pct != null ? `${benchmark.gpu_snapshot.mem_pct}%` : "—"} 
-              tone="cyan" 
+            <Tile
+              label="GPU Mem"
+              value={benchmark?.gpu_snapshot?.mem_pct != null ? `${benchmark.gpu_snapshot.mem_pct}%` : "—"}
+              tone="cyan"
             />
           </div>
 
           {benchmark?.serving_error && (
             <p className="mb-4 font-mono text-[12px] text-coral">Serving Error: {benchmark.serving_error}</p>
-          )}
-          {benchmark?.throughput_error && (
-            <p className="mb-4 font-mono text-[12px] text-coral">Throughput Error: {benchmark.throughput_error}</p>
           )}
           {benchmark?.evaluation_error && (
             <p className="mb-4 font-mono text-[12px] text-coral">Evaluation Error: {benchmark.evaluation_error}</p>
@@ -257,21 +248,12 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
             {benchmark && (
               <>
                 <BenchmarkPhase
-                  title="Serving Benchmark (vLLM benchmark_serving)"
+                  title="Serving Benchmark (vllm bench serve)"
                   phase="serving"
                   passed={benchmark.serving_passed}
                   error={benchmark.serving_error}
                   metrics={benchmark.serving}
                   raw={benchmark.serving_raw}
-                  currentPhase={currentPhase}
-                />
-                <BenchmarkPhase
-                  title="Throughput Benchmark (vLLM benchmark_throughput)"
-                  phase="throughput"
-                  passed={benchmark.throughput_passed}
-                  error={benchmark.throughput_error}
-                  metrics={benchmark.throughput}
-                  raw={benchmark.throughput_raw}
                   currentPhase={currentPhase}
                 />
                 <EvaluationResults
@@ -290,6 +272,94 @@ export function TestPanel({ job, onClose }: { job: TestJob | null; onClose: () =
               {benchmark.gpu_snapshot.util_pct != null && <span>util {benchmark.gpu_snapshot.util_pct}%</span>}
               {benchmark.gpu_snapshot.temp_c != null && <span>{benchmark.gpu_snapshot.temp_c}°C</span>}
               {benchmark.gpu_snapshot.mem_pct != null && <span>mem {benchmark.gpu_snapshot.mem_pct}%</span>}
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+const THROUGHPUT_PHASE_LABEL: Record<string, string> = {
+  stopping: "Stopping current model…",
+  draining: "Draining GPU…",
+  benchmarking: "Running offline throughput benchmark…",
+  reloading: "Reloading original model…",
+};
+
+export function ThroughputPanel({ job, onClose }: { job: ThroughputJob | null; onClose: () => void }) {
+  const open = job !== null && job.state !== "idle";
+  const running = job?.state === "running";
+  const result = job && "throughput" in job.result ? job.result : null;
+
+  const overall = running
+    ? { tone: "amber" as const, label: job.phase ? THROUGHPUT_PHASE_LABEL[job.phase] ?? "Running" : "Running", Icon: Loader2, spin: true }
+    : job?.state === "done"
+      ? { tone: "signal" as const, label: "Benchmarked & reloaded", Icon: ShieldCheck, spin: false }
+      : { tone: "coral" as const, label: "Issues found", Icon: XCircle, spin: false };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[min(94vw,720px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-panel p-6 shadow-bay">
+          <div className="mb-5 flex items-start justify-between">
+            <div>
+              <Eyebrow className="text-cyan">Offline throughput benchmark</Eyebrow>
+              <Dialog.Title className="mt-1 flex items-center gap-2 font-display text-xl font-bold text-ink">
+                <Gauge className="h-5 w-5 text-cyan" />
+                {job?.served_name || "model"}
+              </Dialog.Title>
+            </div>
+            <div className="flex items-center gap-3">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.14em]",
+                  { signal: "border-signal/40 bg-signal/10 text-signal", amber: "border-amber/40 bg-amber/10 text-amber", coral: "border-coral/40 bg-coral/10 text-coral" }[overall.tone],
+                )}
+              >
+                <overall.Icon className={cn("h-3.5 w-3.5", overall.spin && "animate-spin")} />
+                {overall.label}
+              </span>
+              <Dialog.Close className="text-muted hover:text-ink" aria-label="Close">
+                <X className="h-5 w-5" />
+              </Dialog.Close>
+            </div>
+          </div>
+
+          {running && (
+            <p className="mb-4 font-mono text-[12px] text-amber">
+              Model is offline right now — it will reload automatically once the benchmark finishes.
+            </p>
+          )}
+
+          {job?.state === "error" && job.reload_ok === false && (
+            <p className="mb-4 font-mono text-[12px] text-coral">
+              The original model failed to reload — check the dashboard and reload it manually if needed.
+            </p>
+          )}
+
+          {result?.throughput_error && (
+            <p className="mb-4 font-mono text-[12px] text-coral">Benchmark error: {result.throughput_error}</p>
+          )}
+
+          {result && (
+            <BenchmarkPhase
+              title="Offline Throughput (vllm bench throughput)"
+              phase="benchmarking"
+              passed={result.throughput_passed}
+              error={result.throughput_error}
+              metrics={result.throughput}
+              raw={result.throughput_raw}
+              currentPhase={job?.phase || ""}
+            />
+          )}
+
+          {result?.gpu_snapshot && (
+            <div className="mt-4 flex items-center gap-4 border-t border-line pt-3 font-mono text-[11px] text-muted">
+              <span>GPU {result.gpu_snapshot.name}</span>
+              {result.gpu_snapshot.util_pct != null && <span>util {result.gpu_snapshot.util_pct}%</span>}
+              {result.gpu_snapshot.mem_pct != null && <span>mem {result.gpu_snapshot.mem_pct}%</span>}
             </div>
           )}
         </Dialog.Content>

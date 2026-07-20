@@ -1,117 +1,120 @@
 """Standard benchmark runner for GB10 Model Swapper.
 
-Replaces the custom stability battery with industry-standard benchmarks:
-- vLLM benchmark_serving.py: Online serving benchmark (latency, throughput, TTFT, concurrency)
-- vLLM benchmark_throughput.py: Offline throughput benchmark (max throughput, no latency pressure)
-- lm-eval-harness: Model quality/accuracy evaluation (MMLU, GSM8K, BBH, etc.)
+Two distinct things live here, deliberately kept apart:
 
-Results are structured for the dashboard and comparable across models/runs.
+1. The SAFE suite (`run_full_benchmark_suite`) — vLLM's own online serving benchmark
+   (`vllm bench serve`) plus lm-eval-harness quality evaluation, both hitting the
+   already-running server over HTTP. Neither touches what's loaded; safe to run any time,
+   same as the stability battery it replaces.
+2. `run_offline_throughput_benchmark` — vLLM's offline throughput benchmark
+   (`vllm bench throughput`) has no remote-server backend at all (`--backend
+   {vllm,hf,mii,vllm-chat}` — all local-engine, none HTTP); it always loads its own model
+   instance. Running it while the same model is already loaded would try to double-allocate
+   GPU memory on a box with no MIG isolation that wedges (reboot-only recovery) on OOM. This
+   is NOT part of the safe suite — callers MUST unload the current model, drain the GPU, run
+   this, then reload the original model. app.py's dedicated /api/benchmark/throughput
+   endpoint owns that orchestration and the explicit user-facing warning; this module only
+   runs the one disruptive command.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-
-import httpx
 
 
 @dataclass
 class BenchmarkConfig:
-    """Configuration for benchmark runs."""
+    """Configuration for the safe (serving + eval) benchmark suite."""
     # Serving benchmark (online, with latency pressure)
     serving_requests: int = 100
     serving_concurrency: int = 4
     serving_input_len: int = 512
     serving_output_len: int = 128
     serving_dataset: str = "random"
-    
-    # Throughput benchmark (offline, max throughput)
-    throughput_num_prompts: int = 50
-    throughput_input_len: int = 1024
-    throughput_output_len: int = 128
-    
+
     # lm-eval-harness quality evaluation
     eval_tasks: list[str] = field(default_factory=lambda: [
         "mmlu", "gsm8k", "bbh", "hellaswag", "truthfulqa_mc2"
     ])
     eval_limit: int | None = 100  # Limit per task for speed; None = full
     eval_batch_size: int = 4
-    
+
     # General
     timeout_serving: int = 600      # 10 min max for serving bench
-    timeout_throughput: int = 300   # 5 min for throughput
     timeout_eval: int = 1200        # 20 min for quality eval
 
 
 @dataclass
 class BenchmarkResult:
-    """Structured result from a benchmark run."""
-    # Metadata
+    """Structured result from a safe-suite run."""
     model_id: str
     served_name: str
     timestamp: float
     config: BenchmarkConfig
-    
-    # vLLM serving benchmark results
+
     serving: dict[str, Any] = field(default_factory=dict)
     serving_raw: str = ""
     serving_error: str | None = None
-    
-    # vLLM throughput benchmark results
-    throughput: dict[str, Any] = field(default_factory=dict)
-    throughput_raw: str = ""
-    throughput_error: str | None = None
-    
-    # lm-eval-harness results
+
     evaluation: dict[str, Any] = field(default_factory=dict)
     evaluation_raw: str = ""
     evaluation_error: str | None = None
-    
-    # GPU snapshot at end
+
     gpu_snapshot: dict[str, Any] = field(default_factory=dict)
-    
-    # Summary flags
+
     serving_passed: bool = False
-    throughput_passed: bool = False
     evaluation_passed: bool = False
-    
+
     @property
     def all_passed(self) -> bool:
-        return (self.serving_passed and self.throughput_passed and 
-                self.evaluation_passed)
+        return self.serving_passed and self.evaluation_passed
+
+
+@dataclass
+class ThroughputResult:
+    """Structured result from the standalone (disruptive) offline throughput benchmark."""
+    model_id: str
+    model_repo: str
+    timestamp: float
+    throughput_num_prompts: int
+    throughput_input_len: int
+    throughput_output_len: int
+
+    throughput: dict[str, Any] = field(default_factory=dict)
+    throughput_raw: str = ""
+    throughput_error: str | None = None
+    throughput_passed: bool = False
+
+    gpu_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 def _parse_vllm_benchmark_output(output: str) -> dict[str, Any]:
     """Parse vLLM benchmark output (JSON or text) into structured dict."""
-    # vLLM benchmarks can output JSON with --output-json
     try:
         return json.loads(output)
     except json.JSONDecodeError:
         pass
-    
-    # Fallback: parse key metrics from text output
+
+    # Fallback: parse key metrics from the printed summary table (neither `vllm bench serve` nor
+    # `vllm bench throughput` support an --output-json-to-stdout flag; --save-result writes a file
+    # instead, which we deliberately don't chase — the printed summary already has what we show).
     result = {}
     for line in output.splitlines():
         line = line.strip()
         if "Throughput:" in line or "throughput:" in line.lower():
-            # "Throughput: 123.4 tokens/s"
             parts = line.split(":")
             if len(parts) > 1:
                 result["throughput_tok_s"] = _extract_float(parts[1])
         elif "Latency" in line and ("avg" in line.lower() or "mean" in line.lower()):
-            # "Average Latency: 45.2 ms"
             result["avg_latency_ms"] = _extract_float(line)
         elif "TTFT" in line or "Time to first token" in line:
             result["ttft_ms"] = _extract_float(line)
         elif "P50" in line or "P90" in line or "P99" in line:
-            # Percentile latencies
             key = line.split(":")[0].strip().lower().replace(" ", "_")
             result[key] = _extract_float(line)
         elif "Successful requests" in line:
@@ -135,26 +138,19 @@ def _extract_int(text: str) -> int | None:
 
 def _parse_lm_eval_output(output: str) -> dict[str, Any]:
     """Parse lm-eval-harness output into structured results."""
-    # lm-eval outputs JSON to stdout when --output_path is used, or prints summary
     result = {"tasks": {}, "summary": {}}
-    
-    # Try to find JSON in output
     try:
-        # Look for the final JSON summary
         for line in output.splitlines():
             line = line.strip()
             if line.startswith("{") and "results" in line:
-                data = json.loads(line)
-                result = data
+                result = json.loads(line)
                 break
     except json.JSONDecodeError:
         pass
-    
-    # Also parse text summary for key metrics
+
     for line in output.splitlines():
         line = line.strip()
         if "|" in line and any(t in line for t in ["acc", "f1", "em", "mc"]):
-            # Table row like: "| mmlu | acc | 0.7234 |"
             parts = [p.strip() for p in line.split("|") if p.strip()]
             if len(parts) >= 3:
                 task, metric, value = parts[0], parts[1], parts[2]
@@ -162,23 +158,14 @@ def _parse_lm_eval_output(output: str) -> dict[str, Any]:
                     result.setdefault("tasks", {})[task] = {metric: float(value)}
                 except ValueError:
                     pass
-    
+
     return result
 
 
-def _docker_exec_container(model: str) -> str:
+def _serving_container(served_name: str) -> str:
     """swap-vllm-<served-name> is the project-wide container naming convention (see
     manifests/containers.env, gb10-swap.sh) — no separate lookup needed."""
-    return f"swap-vllm-{model}"
-
-
-def _vllm_module_cmd(container: str, module: str, args: list[str]) -> list[str]:
-    """vllm (the pip package, including vllm.benchmarks.*) only exists inside the serving
-    container's own image — swap-ui's venv deliberately stays lightweight (fastapi/uvicorn/httpx +
-    lm-eval/datasets) and never installs vllm itself. Run the benchmark script via `docker exec`
-    into the already-running container instead, where `--base-url http://localhost:PORT` resolves
-    correctly (docker exec shares the container's network namespace, so localhost is itself)."""
-    return ["docker", "exec", "-e", "VLLM_USE_V1=1", container, "python3", "-m", module, *args]
+    return f"swap-vllm-{served_name}"
 
 
 async def run_vllm_serving_benchmark(
@@ -187,10 +174,13 @@ async def run_vllm_serving_benchmark(
     config: BenchmarkConfig,
     gpu_snapshot_fn,
 ) -> tuple[dict[str, Any], str, str | None]:
-    """Run vLLM benchmark_serving.py against the running server."""
-    # vLLM's benchmark_serving.py supports --base-url for remote servers
-    # We need to run it with the model name as served on the server
-    cmd = _vllm_module_cmd(_docker_exec_container(model), "vllm.benchmarks.benchmark_serving", [
+    """Run `vllm bench serve` (vLLM 0.24's online serving benchmark CLI) against the already-
+    running server, inside its own container via `docker exec` — vllm itself only exists in the
+    serving image, not swap-ui's own lightweight venv. `docker exec` shares the container's network
+    namespace, so --base-url http://localhost:PORT correctly reaches the server running in it."""
+    cmd = [
+        "docker", "exec", "-e", "VLLM_USE_V1=1", _serving_container(model),
+        "vllm", "bench", "serve",
         "--base-url", base_url,
         "--model", model,
         "--num-prompts", str(config.serving_requests),
@@ -198,8 +188,7 @@ async def run_vllm_serving_benchmark(
         "--input-len", str(config.serving_input_len),
         "--output-len", str(config.serving_output_len),
         "--dataset-name", config.serving_dataset,
-        "--output-json", "-",  # stdout
-    ])
+    ]
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -211,6 +200,8 @@ async def run_vllm_serving_benchmark(
             proc.communicate(), timeout=config.timeout_serving
         )
         raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
+        if proc.returncode != 0:
+            return {}, raw, f"vllm bench serve exited {proc.returncode}"
         parsed = _parse_vllm_benchmark_output(raw)
         parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
@@ -220,67 +211,32 @@ async def run_vllm_serving_benchmark(
         return {}, "", f"Serving benchmark failed: {e}"
 
 
-async def run_vllm_throughput_benchmark(
-    base_url: str,
-    model: str,
-    config: BenchmarkConfig,
-    gpu_snapshot_fn,
-) -> tuple[dict[str, Any], str, str | None]:
-    """Run vLLM benchmark_throughput.py against the running server."""
-    cmd = _vllm_module_cmd(_docker_exec_container(model), "vllm.benchmarks.benchmark_throughput", [
-        "--base-url", base_url,
-        "--model", model,
-        "--num-prompts", str(config.throughput_num_prompts),
-        "--input-len", str(config.throughput_input_len),
-        "--output-len", str(config.throughput_output_len),
-        "--output-json", "-",
-    ])
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=config.timeout_throughput
-        )
-        raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
-        parsed = _parse_vllm_benchmark_output(raw)
-        parsed["gpu"] = gpu_snapshot_fn()
-        return parsed, raw, None
-    except asyncio.TimeoutError:
-        return {}, "", f"Throughput benchmark timed out after {config.timeout_throughput}s"
-    except Exception as e:
-        return {}, "", f"Throughput benchmark failed: {e}"
-
-
 async def run_lm_eval_harness(
     base_url: str,
     model: str,
     config: BenchmarkConfig,
     gpu_snapshot_fn,
 ) -> tuple[dict[str, Any], str, str | None]:
-    """Run lm-eval-harness against the vLLM server via OpenAI-compatible API.
-    
-    Uses the `local-completions` model type with the OpenAI-compatible endpoint.
-    """
-    # lm-eval can use local-completions with a custom endpoint
-    # We'll use the vLLM server's /v1/completions endpoint
+    """Run lm-eval-harness against the vLLM server via its OpenAI-compatible API, using the
+    `local-completions` model type — an HTTP client, not a local model load, so this runs safely
+    in swap-ui's own venv without touching the GPU itself."""
     tasks = ",".join(config.eval_tasks)
-    
+
     cmd = [
         sys.executable, "-m", "lm_eval",
         "--model", "local-completions",
-        "--model_args", f"base_url={base_url}/v1,model={model},max_gen_toks={config.serving_output_len},batch_size={config.eval_batch_size}",
+        # batch_size is passed via lm-eval's own --batch_size flag below, NOT here too — lm-eval's
+        # CLI already forwards --batch_size into the model constructor, and having it in both
+        # places raised "got multiple values for keyword argument 'batch_size'".
+        "--model_args", f"base_url={base_url}/v1,model={model},max_gen_toks={config.serving_output_len}",
         "--tasks", tasks,
-        "--device", "cuda",
+        "--batch_size", str(config.eval_batch_size),
         "--output_path", "-",  # stdout
     ]
-    
+
     if config.eval_limit:
         cmd += ["--limit", str(config.eval_limit)]
-    
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -292,6 +248,8 @@ async def run_lm_eval_harness(
             proc.communicate(), timeout=config.timeout_eval
         )
         raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
+        if proc.returncode != 0:
+            return {}, raw, f"lm-eval exited {proc.returncode}"
         parsed = _parse_lm_eval_output(raw)
         parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
@@ -309,19 +267,8 @@ async def run_full_benchmark_suite(
     gpu_snapshot_fn=lambda: {},
     on_progress: callable = None,
 ) -> BenchmarkResult:
-    """Run the complete standard benchmark suite.
-    
-    Args:
-        base_url: Base URL of the vLLM server (e.g., http://localhost:8002)
-        model: Model name as served (SERVED_NAME)
-        model_id: Registry model ID
-        config: Benchmark configuration (uses defaults if None)
-        gpu_snapshot_fn: Callable returning GPU telemetry dict
-        on_progress: Callback(state_dict) for live progress updates
-    
-    Returns:
-        BenchmarkResult with all three benchmark results
-    """
+    """Run the safe benchmark suite: serving + quality eval. Both hit the already-running
+    server over HTTP — neither touches what's loaded, so this never disrupts serving."""
     config = config or BenchmarkConfig()
     result = BenchmarkResult(
         model_id=model_id,
@@ -329,49 +276,34 @@ async def run_full_benchmark_suite(
         timestamp=time.time(),
         config=config,
     )
-    
+
     state = {"phase": "starting", "result": result}
-    
-    # 1. Serving benchmark (online, latency-sensitive)
+
     if on_progress:
         state["phase"] = "serving"
         on_progress(state)
-    
+
     serving = await run_vllm_serving_benchmark(base_url, model, config, gpu_snapshot_fn)
     result.serving, result.serving_raw, result.serving_error = serving
     result.serving_passed = result.serving_error is None and result.serving.get("failed_requests", 0) == 0
-    
+
     if on_progress:
         on_progress(state)
-    
-    # 2. Throughput benchmark (offline, max throughput)
-    if on_progress:
-        state["phase"] = "throughput"
-        on_progress(state)
-    
-    throughput = await run_vllm_throughput_benchmark(base_url, model, config, gpu_snapshot_fn)
-    result.throughput, result.throughput_raw, result.throughput_error = throughput
-    result.throughput_passed = result.throughput_error is None
-    
-    if on_progress:
-        on_progress(state)
-    
-    # 3. Quality evaluation (lm-eval-harness)
+
     if on_progress:
         state["phase"] = "evaluation"
         on_progress(state)
-    
+
     evaluation = await run_lm_eval_harness(base_url, model, config, gpu_snapshot_fn)
     result.evaluation, result.evaluation_raw, result.evaluation_error = evaluation
     result.evaluation_passed = result.evaluation_error is None
-    
-    # Final GPU snapshot
+
     result.gpu_snapshot = gpu_snapshot_fn()
-    
+
     if on_progress:
         state["phase"] = "complete"
         on_progress(state)
-    
+
     return result
 
 
@@ -386,9 +318,6 @@ def benchmark_result_to_dict(result: BenchmarkResult) -> dict[str, Any]:
             "serving_concurrency": result.config.serving_concurrency,
             "serving_input_len": result.config.serving_input_len,
             "serving_output_len": result.config.serving_output_len,
-            "throughput_num_prompts": result.config.throughput_num_prompts,
-            "throughput_input_len": result.config.throughput_input_len,
-            "throughput_output_len": result.config.throughput_output_len,
             "eval_tasks": result.config.eval_tasks,
             "eval_limit": result.config.eval_limit,
         },
@@ -396,14 +325,92 @@ def benchmark_result_to_dict(result: BenchmarkResult) -> dict[str, Any]:
         "serving_raw": result.serving_raw,
         "serving_error": result.serving_error,
         "serving_passed": result.serving_passed,
-        "throughput": result.throughput,
-        "throughput_raw": result.throughput_raw,
-        "throughput_error": result.throughput_error,
-        "throughput_passed": result.throughput_passed,
         "evaluation": result.evaluation,
         "evaluation_raw": result.evaluation_raw,
         "evaluation_error": result.evaluation_error,
         "evaluation_passed": result.evaluation_passed,
         "gpu_snapshot": result.gpu_snapshot,
         "all_passed": result.all_passed,
+    }
+
+
+# --- offline throughput benchmark (disruptive — see module docstring) --------------------------
+
+async def run_offline_throughput_benchmark(
+    vllm_image: str,
+    hf_cache_vol: str,
+    model_repo: str,
+    model_id: str,
+    num_prompts: int = 50,
+    input_len: int = 1024,
+    output_len: int = 128,
+    timeout_s: int = 600,
+    gpu_snapshot_fn=lambda: {},
+) -> ThroughputResult:
+    """Run `vllm bench throughput` (offline, own model instance) in a throwaway container.
+
+    Caller MUST have already stopped whatever's currently loaded and confirmed the GPU is idle —
+    this does not check. `--rm` removes the container (and its GPU memory) the moment the command
+    exits, whether it succeeds or fails.
+    """
+    result = ThroughputResult(
+        model_id=model_id,
+        model_repo=model_repo,
+        timestamp=time.time(),
+        throughput_num_prompts=num_prompts,
+        throughput_input_len=input_len,
+        throughput_output_len=output_len,
+    )
+
+    cmd = [
+        "docker", "run", "--rm", "--gpus", "all", "--ipc=host",
+        "--ulimit", "memlock=-1", "--ulimit", "stack=67108864",
+        "-v", f"{hf_cache_vol}:/root/.cache/huggingface",
+        "--entrypoint", "vllm",
+        vllm_image,
+        "bench", "throughput",
+        "--backend", "vllm",
+        "--model", model_repo,
+        "--trust-remote-code",
+        "--num-prompts", str(num_prompts),
+        "--input-len", str(input_len),
+        "--output-len", str(output_len),
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
+        result.throughput_raw = raw
+        if proc.returncode != 0:
+            result.throughput_error = f"vllm bench throughput exited {proc.returncode}"
+        else:
+            result.throughput = _parse_vllm_benchmark_output(raw)
+            result.throughput_passed = True
+    except asyncio.TimeoutError:
+        result.throughput_error = f"Throughput benchmark timed out after {timeout_s}s"
+    except Exception as e:
+        result.throughput_error = f"Throughput benchmark failed: {e}"
+
+    result.gpu_snapshot = gpu_snapshot_fn()
+    return result
+
+
+def throughput_result_to_dict(result: ThroughputResult) -> dict[str, Any]:
+    return {
+        "model_id": result.model_id,
+        "model_repo": result.model_repo,
+        "timestamp": result.timestamp,
+        "throughput_num_prompts": result.throughput_num_prompts,
+        "throughput_input_len": result.throughput_input_len,
+        "throughput_output_len": result.throughput_output_len,
+        "throughput": result.throughput,
+        "throughput_raw": result.throughput_raw,
+        "throughput_error": result.throughput_error,
+        "throughput_passed": result.throughput_passed,
+        "gpu_snapshot": result.gpu_snapshot,
     }

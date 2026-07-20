@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Boxes, Wifi, WifiOff, Plus, DownloadCloud, Loader2, ArrowDownUp, Sun, Moon, ScrollText } from "lucide-react";
-import { api, type Status, type Model, type DownloadJob, type TestJob } from "./api";
+import { api, type Status, type Model, type DownloadJob, type TestJob, type ThroughputJob } from "./api";
 import { GpuBay } from "./components/GpuBay";
 import { ModelCard } from "./components/ModelCard";
 import { DangerZone } from "./components/DangerZone";
@@ -11,7 +11,7 @@ import { RemoveModelDialog } from "./components/RemoveModelDialog";
 import { RecipeEditorDialog } from "./components/RecipeEditorDialog";
 import { LogsPanel } from "./components/LogsPanel";
 import { ImportDialog } from "./components/ImportDialog";
-import { TestPanel } from "./components/TestPanel";
+import { TestPanel, ThroughputPanel } from "./components/TestPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { Button, Pill } from "./components/ui";
 import { cn } from "./lib/cn";
@@ -74,6 +74,7 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(Boolean(importParam));
   const [download, setDownload] = useState<DownloadJob | null>(null);
   const [testJob, setTestJob] = useState<TestJob | null>(null);
+  const [throughputJob, setThroughputJob] = useState<ThroughputJob | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("status");
   const [unloading, setUnloading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -85,6 +86,8 @@ export default function App() {
   const prevDlId = useRef<number>(0);
   const prevTestId = useRef<number>(0);
   const firstTestPoll = useRef<boolean>(true);
+  const prevThroughputId = useRef<number>(0);
+  const firstThroughputPoll = useRef<boolean>(true);
 
   const loadModels = useCallback(async () => {
     try {
@@ -142,6 +145,38 @@ export default function App() {
     }
   }, [loadModels]);
 
+  const pollThroughput = useCallback(async () => {
+    try {
+      const t = await api.benchmarkThroughputStatus();
+      if (t.state === "idle") return;
+      // Same first-poll-adopts-without-popping-open pattern as pollTest.
+      if (firstThroughputPoll.current) {
+        firstThroughputPoll.current = false;
+        prevThroughputId.current = t.id;
+        if (t.state === "running") setThroughputJob(t);
+        return;
+      }
+      if (t.state === "running") {
+        setThroughputJob(t);
+      } else if (t.id !== prevThroughputId.current && t.id > 0) {
+        prevThroughputId.current = t.id;
+        setThroughputJob(t);
+        const ok = "throughput_passed" in t.result && t.result.throughput_passed && t.reload_ok;
+        setNotice({
+          tone: ok ? "signal" : "coral",
+          text: ok
+            ? `${t.served_name} throughput benchmarked and reloaded`
+            : t.reload_ok === false
+              ? `${t.served_name} benchmark ran but failed to reload — check the dashboard`
+              : `${t.served_name} throughput benchmark failed`,
+        });
+        void loadModels();
+      }
+    } catch {
+      /* handled by status poll */
+    }
+  }, [loadModels]);
+
   const poll = useCallback(async () => {
     try {
       const s = await api.status();
@@ -168,18 +203,21 @@ export default function App() {
     void poll();
     void pollDownload();
     void pollTest();
-  }, [loadModels, poll, pollDownload, pollTest]);
+    void pollThroughput();
+  }, [loadModels, poll, pollDownload, pollTest, pollThroughput]);
 
   useEffect(() => {
     const fast =
-      status?.swap.state === "running" || download?.state === "running" || testJob?.state === "running";
+      status?.swap.state === "running" || download?.state === "running" ||
+      testJob?.state === "running" || throughputJob?.state === "running";
     const id = setInterval(() => {
       void poll();
       void pollDownload();
       void pollTest();
+      void pollThroughput();
     }, fast ? 1000 : 2500);
     return () => clearInterval(id);
-  }, [poll, pollDownload, pollTest, status?.swap.state, download?.state, testJob?.state]);
+  }, [poll, pollDownload, pollTest, pollThroughput, status?.swap.state, download?.state, testJob?.state, throughputJob?.state]);
 
   const onSwap = useCallback(
     async (model_id: string) => {
@@ -254,6 +292,17 @@ export default function App() {
     }
   }, [pollTest]);
 
+  const onThroughputBenchmark = useCallback(async () => {
+    try {
+      const res = await api.benchmarkThroughput();
+      setNotice(null);
+      setThroughputJob(res.throughput); // open the panel immediately
+      void pollThroughput();
+    } catch (e) {
+      setNotice({ tone: "coral", text: (e as Error).message });
+    }
+  }, [pollThroughput]);
+
   const onCancelSwap = useCallback(async () => {
     try {
       await api.swapCancel();
@@ -279,7 +328,8 @@ export default function App() {
 
   const swapping = status?.swap.state === "running";
   const testing = testJob?.state === "running";
-  const busy = swapping || rebooting || testing;
+  const throughputBenchmarking = throughputJob?.state === "running";
+  const busy = swapping || rebooting || testing || throughputBenchmarking;
   const sortedModels = useMemo(
     () => sortModels(models, sortBy, status?.current.model_id),
     [models, sortBy, status?.current.model_id],
@@ -298,8 +348,10 @@ export default function App() {
             onCancelSwap={onCancelSwap}
             onUnload={onUnload}
             onChat={() => setChatOpen(true)}
+            onThroughputBenchmark={onThroughputBenchmark}
             testing={testing}
             unloading={unloading}
+            throughputBenchmarking={throughputBenchmarking}
           />
         ) : (
           <div className="rounded-xl border border-line bg-panel/60 px-6 py-16 text-center font-mono text-sm text-muted">
@@ -423,6 +475,7 @@ export default function App() {
         }}
       />
       <TestPanel job={testJob} onClose={() => setTestJob(null)} />
+      <ThroughputPanel job={throughputJob} onClose={() => setThroughputJob(null)} />
       <ChatPanel
         open={chatOpen}
         model={status?.current.served_name || null}

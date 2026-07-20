@@ -92,6 +92,18 @@ TEST: dict[str, Any] = {
 }
 _test_lock = asyncio.Lock()
 
+# A single global offline-throughput-benchmark run. Disruptive by design (unload -> benchmark a
+# throwaway standalone instance -> reload) — the /api/benchmark/throughput endpoint requires the
+# frontend to have shown an explicit "this takes the model offline" warning before calling it; see
+# benchmarks.py's module docstring for why this can't just hit the already-running server.
+THROUGHPUT: dict[str, Any] = {
+    "id": 0, "model_id": None, "served_name": None, "state": "idle",
+    "phase": None,          # stopping | draining | benchmarking | reloading
+    "result": {}, "reload_ok": None,
+    "started_at": None, "finished_at": None,
+}
+_throughput_lock = asyncio.Lock()
+
 # In-memory availability cache (which registry models have downloaded weights). Refreshed on
 # demand via POST /api/models/refresh and once at startup.
 _availability: dict[str, bool] = {}
@@ -486,6 +498,8 @@ async def api_swap(body: dict[str, Any]) -> dict[str, Any]:
     env_path = _env_path_for(model_id)
     if env_path is None:
         raise HTTPException(404, f"unknown model: {model_id}")
+    if THROUGHPUT["state"] == "running":
+        raise HTTPException(409, "an offline throughput benchmark is unloading/reloading the model — try again once it finishes")
     async with _job_lock:
         if JOB["state"] == "running":
             raise HTTPException(409, f"a swap to {JOB['model_id']} is already in progress")
@@ -1355,6 +1369,122 @@ async def _run_tests(model_id: str | None, served_name: str) -> None:
         TEST["state"] = "error"
     finally:
         TEST["finished_at"] = int(time.time())
+
+
+# --- offline throughput benchmark (disruptive — see benchmarks.py's module docstring) ----------
+async def _wait_gpu_idle(timeout_s: int) -> bool:
+    """Poll until no compute processes remain on the GPU — mirrors gb10_wait_gpu_idle in
+    gb10-lib.sh (the same WEDGE guard gb10-swap.sh uses), so the throwaway benchmark container
+    never starts before the just-stopped model has actually released its GPU memory."""
+    waited = 0
+    while waited < timeout_s:
+        rc, out, _ = _run(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"])
+        if rc == 0 and not out.strip():
+            return True
+        await asyncio.sleep(3)
+        waited += 3
+    return False
+
+
+def _throughput_public() -> dict[str, Any]:
+    return {k: THROUGHPUT[k] for k in
+            ("id", "model_id", "served_name", "state", "phase", "reload_ok",
+             "started_at", "finished_at")} | {"result": THROUGHPUT.get("result", {})}
+
+
+@app.post("/api/benchmark/throughput")
+async def api_benchmark_throughput(_body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Offline throughput benchmark — DISRUPTIVE: unloads the current model, runs vLLM's own
+    offline throughput benchmark (`vllm bench throughput`) against a throwaway standalone
+    instance, then reloads the original model. vLLM's offline throughput benchmark has no
+    remote-server backend — it always loads its own model — so this cannot run alongside the
+    already-serving model without risking a double GPU allocation (OOM/wedge on this hardware).
+    The frontend MUST show an explicit "this takes the model offline for several minutes"
+    warning before calling this; nothing below re-confirms that."""
+    cur = _current_model()
+    if not cur["loaded"] or not cur["healthy"] or not cur["model_id"]:
+        raise HTTPException(400, "no healthy registered model is loaded — load one before benchmarking")
+    if JOB["state"] == "running":
+        raise HTTPException(409, f"a swap to {JOB['model_id']} is already in progress")
+    if TEST["state"] == "running":
+        raise HTTPException(409, "a test run is already in progress")
+    env_path = _env_path_for(cur["model_id"])
+    if env_path is None:
+        raise HTTPException(404, f"unknown model: {cur['model_id']}")
+    model_repo = _parse_env_file(env_path).get("SERVE_MODEL")
+    if not model_repo:
+        raise HTTPException(400, f"recipe for {cur['model_id']} has no SERVE_MODEL")
+    async with _throughput_lock:
+        if THROUGHPUT["state"] == "running":
+            raise HTTPException(409, "a throughput benchmark is already in progress")
+        THROUGHPUT.update({
+            "id": THROUGHPUT["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
+            "state": "running", "phase": "stopping", "result": {}, "reload_ok": None,
+            "started_at": int(time.time()), "finished_at": None,
+        })
+    asyncio.create_task(_run_throughput_benchmark(
+        cur["model_id"], cur["served_name"], cur["container"], env_path, model_repo))
+    return {"accepted": True, "throughput": _throughput_public()}
+
+
+@app.get("/api/benchmark/throughput/status")
+def api_benchmark_throughput_status() -> dict[str, Any]:
+    return _throughput_public()
+
+
+async def _run_throughput_benchmark(
+    model_id: str, served_name: str, container: str | None, env_path: Path, model_repo: str,
+) -> None:
+    try:
+        # 1. Stop whatever's currently loaded.
+        THROUGHPUT["phase"] = "stopping"
+        if container:
+            _run(["docker", "stop", "-t", "10", container], timeout=40.0)
+
+        # 2. Drain the GPU before the throwaway container claims it — same WEDGE guard gb10-swap.sh
+        # applies on every normal swap.
+        THROUGHPUT["phase"] = "draining"
+        if not await _wait_gpu_idle(int(DRAIN_TIMEOUT)):
+            THROUGHPUT["result"] = {"error": "GPU did not drain — likely wedged; reboot required"}
+            THROUGHPUT["state"] = "error"
+            return
+
+        # 3. Run the offline throughput benchmark against a throwaway standalone instance.
+        THROUGHPUT["phase"] = "benchmarking"
+        result = await benchmarks.run_offline_throughput_benchmark(
+            vllm_image=VLLM_IMAGE, hf_cache_vol=HF_CACHE_VOL, model_repo=model_repo,
+            model_id=model_id, gpu_snapshot_fn=_gpu_state,
+        )
+        THROUGHPUT["result"] = benchmarks.throughput_result_to_dict(result)
+
+        # 4. Reload the original model — same driver script as a normal swap, run regardless of
+        # whether the benchmark above succeeded, so the box never sits with the model unloaded.
+        THROUGHPUT["phase"] = "reloading"
+        env = {**os.environ, "GB10_LOCAL": "1", "DRAIN_TIMEOUT": DRAIN_TIMEOUT,
+               "GB10_HEALTH": f"http://localhost:{SERVE_PORT}/health"}
+        proc = await asyncio.create_subprocess_exec(
+            "bash", str(SWAP_SH), "--env", str(env_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+        )
+        out_lines: list[str] = []
+        assert proc.stdout is not None
+        async for raw in proc.stdout:
+            out_lines.append(raw.decode(errors="replace").rstrip())
+        await proc.wait()
+        reload_result = next(
+            (l[7:].strip() for l in out_lines if l.startswith("RESULT ")),
+            f"ERROR exit-{proc.returncode}",
+        )
+        THROUGHPUT["reload_ok"] = reload_result.split()[0] in ("SWAPPED", "NOOP")
+        THROUGHPUT["state"] = "done" if (result.throughput_passed and THROUGHPUT["reload_ok"]) else "error"
+        if not THROUGHPUT["reload_ok"]:
+            THROUGHPUT["result"]["reload_error"] = reload_result
+    except Exception as exc:  # noqa: BLE001
+        THROUGHPUT["result"] = {**THROUGHPUT.get("result", {}), "error": str(exc)}
+        THROUGHPUT["state"] = "error"
+    finally:
+        THROUGHPUT["phase"] = None
+        THROUGHPUT["finished_at"] = int(time.time())
 
 
 # --- transparent model proxy ------------------------------------------------------------------

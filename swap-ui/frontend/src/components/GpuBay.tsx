@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Cpu, Thermometer, Server, FlaskConical, Ban, PowerOff, MessagesSquare, Copy, Check, Radio, Timer } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Cpu, Thermometer, Server, FlaskConical, Ban, PowerOff, MessagesSquare, Copy, Check, Radio, Timer, Gauge, TriangleAlert } from "lucide-react";
 import type { Status, Model } from "../api";
 import { cn } from "../lib/cn";
 import { Panel, Eyebrow, Pill, Button } from "./ui";
@@ -114,8 +115,10 @@ export function GpuBay({
   onCancelSwap,
   onUnload,
   onChat,
+  onThroughputBenchmark,
   testing,
   unloading,
+  throughputBenchmarking,
 }: {
   status: Status;
   models: Model[];
@@ -123,12 +126,15 @@ export function GpuBay({
   onCancelSwap: () => void;
   onUnload: () => void;
   onChat: () => void;
+  onThroughputBenchmark: () => void;
   testing: boolean;
   unloading: boolean;
+  throughputBenchmarking: boolean;
 }) {
   const { gpu, current, swap, serve_port, connections, throughput } = status;
   const swapping = swap.state === "running";
   const occupant = models.find((m) => m.id === current.model_id);
+  const [confirmThroughputOpen, setConfirmThroughputOpen] = useState(false);
 
   const coreState = gpu.wedged
     ? "wedged"
@@ -142,6 +148,7 @@ export function GpuBay({
     (swap.model_id && models.find((m) => m.id === swap.model_id)?.label) || swap.model_id || "—";
 
   return (
+    <>
     <Panel className="overflow-hidden shadow-bay">
       {/* top rail: bay identity + live GPU telemetry (stacks on mobile) */}
       <div className="flex flex-col gap-3 border-b border-line px-6 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -245,6 +252,17 @@ export function GpuBay({
                   <FlaskConical className="h-3.5 w-3.5" /> {testing ? "Testing…" : "Test stability"}
                 </Button>
               )}
+              {current.healthy && !gpu.wedged && (
+                <Button
+                  variant="ghost"
+                  onClick={() => setConfirmThroughputOpen(true)}
+                  disabled={throughputBenchmarking || testing}
+                  className="w-full sm:w-auto"
+                >
+                  <Gauge className="h-3.5 w-3.5" />
+                  {throughputBenchmarking ? "Benchmarking…" : "Benchmark throughput"}
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -290,5 +308,43 @@ export function GpuBay({
         )}
       </div>
     </Panel>
+
+    <Dialog.Root open={confirmThroughputOpen} onOpenChange={setConfirmThroughputOpen}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(94vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-panel p-6 shadow-bay">
+          <div className="flex items-start gap-3">
+            <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber" />
+            <div>
+              <Dialog.Title className="font-display text-lg font-bold text-ink">
+                This takes the model offline
+              </Dialog.Title>
+              <Dialog.Description className="mt-2 font-mono text-[12px] leading-relaxed text-muted">
+                vLLM's offline throughput benchmark always loads its own standalone model
+                instance — it can't run alongside the one currently serving. This will unload{" "}
+                <span className="text-ink">{occupant?.label || current.served_name}</span>,
+                benchmark a temporary instance, then reload it. Expect several minutes of
+                downtime on <span className="text-ink">:{serve_port}</span>.
+              </Dialog.Description>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2.5">
+            <Button variant="ghost" onClick={() => setConfirmThroughputOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setConfirmThroughputOpen(false);
+                onThroughputBenchmark();
+              }}
+            >
+              <Gauge className="h-3.5 w-3.5" /> Take offline &amp; benchmark
+            </Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+    </>
   );
 }

@@ -148,14 +148,10 @@ export interface BenchmarkConfig {
   serving_input_len: number;
   serving_output_len: number;
   serving_dataset: string;
-  throughput_num_prompts: number;
-  throughput_input_len: number;
-  throughput_output_len: number;
   eval_tasks: string[];
   eval_limit: number | null;
   eval_batch_size: number;
   timeout_serving: number;
-  timeout_throughput: number;
   timeout_eval: number;
 }
 
@@ -177,10 +173,6 @@ export interface BenchmarkResult {
   serving_raw: string;
   serving_error: string | null;
   serving_passed: boolean;
-  throughput: BenchmarkPhaseResult;
-  throughput_raw: string;
-  throughput_error: string | null;
-  throughput_passed: boolean;
   evaluation: BenchmarkPhaseResult;
   evaluation_raw: string;
   evaluation_error: string | null;
@@ -199,6 +191,35 @@ export interface TestJob {
   finished_at: number | null;
   benchmark: BenchmarkResult;
   report?: BenchmarkResult; // backward compat alias
+}
+
+// Offline throughput benchmark — DISRUPTIVE (unloads the model, benchmarks a throwaway
+// standalone instance, reloads the model). Kept as a separate job/type from the safe suite
+// above; the UI must confirm with the user before calling api.benchmarkThroughput().
+export interface ThroughputResult {
+  model_id: string;
+  model_repo: string;
+  timestamp: number;
+  throughput_num_prompts: number;
+  throughput_input_len: number;
+  throughput_output_len: number;
+  throughput: BenchmarkPhaseResult;
+  throughput_raw: string;
+  throughput_error: string | null;
+  throughput_passed: boolean;
+  gpu_snapshot: Gpu;
+}
+
+export interface ThroughputJob {
+  id: number;
+  model_id: string | null;
+  served_name: string | null;
+  state: "idle" | "running" | "done" | "error";
+  phase: "stopping" | "draining" | "benchmarking" | "reloading" | null;
+  reload_ok: boolean | null;
+  started_at: number | null;
+  finished_at: number | null;
+  result: ThroughputResult | Record<string, never>;
 }
 
 export interface UpdateJob {
@@ -260,6 +281,14 @@ export const api = {
 
   test: () => fetch("/api/test", { method: "POST" }).then(j<{ accepted: boolean; test: TestJob }>),
   testStatus: () => fetch("/api/test/status").then(j<TestJob>),
+
+  // Caller MUST confirm with the user first — this takes the model offline for several minutes
+  // (unload -> benchmark a throwaway standalone instance -> reload).
+  benchmarkThroughput: () =>
+    fetch("/api/benchmark/throughput", { method: "POST" }).then(
+      j<{ accepted: boolean; throughput: ThroughputJob }>
+    ),
+  benchmarkThroughputStatus: () => fetch("/api/benchmark/throughput/status").then(j<ThroughputJob>),
 
   updates: () => fetch("/api/updates").then(j<UpdatesInfo>),
   updatesRefresh: (password: string) =>
