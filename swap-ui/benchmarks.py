@@ -46,7 +46,10 @@ class BenchmarkConfig:
 
     # General
     timeout_serving: int = 600      # 10 min max for serving bench
-    timeout_eval: int = 1200        # 20 min for quality eval
+    timeout_eval: int = 3600        # 60 min for quality eval — ~tens of thousands of
+                                     # loglikelihood requests even at eval_limit=100/task;
+                                     # num_concurrent (see run_lm_eval_harness) cuts wall time
+                                     # but this still needs real margin, not just the old 20 min
 
 
 @dataclass
@@ -243,7 +246,11 @@ async def run_lm_eval_harness(
         # base_url must be the full completions endpoint, not just the API root — the class
         # default is "https://api.openai.com/v1/completions"; passing just ".../v1" 404s since
         # lm-eval doesn't append "/completions" itself.
-        f"base_url={base_url}/v1/completions,model={model},tokenizer={model_repo},max_gen_toks={config.serving_output_len}",
+        # num_concurrent defaults to 1 (fully sequential) — a real eval run is ~tens of thousands
+        # of loglikelihood requests (one per multiple-choice option), which timed out after 20
+        # real minutes at num_concurrent=1. Reuse eval_batch_size as the concurrency level too.
+        f"base_url={base_url}/v1/completions,model={model},tokenizer={model_repo},"
+        f"max_gen_toks={config.serving_output_len},num_concurrent={config.eval_batch_size}",
         "--tasks", tasks,
         "--batch_size", str(config.eval_batch_size),
         "--output_path", "-",  # stdout
