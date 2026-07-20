@@ -150,3 +150,79 @@ OUT_DIR_HOST=${OUT_DIR_HOST_DEST}
 EOF
   log "Wrote manifests/containers.local.env (OUT_DIR_HOST=${OUT_DIR_HOST_DEST})"
 }
+
+render_boot_unit() {
+  local swap_user_home
+  swap_user_home="$(getent passwd "$SWAP_USER" | cut -d: -f6)"
+  [ -n "$swap_user_home" ] || die "no such user: $SWAP_USER"
+  local rendered="/tmp/gb10-serve-boot.service.rendered.$$"
+  render_template "${HERE}/orchestration/gb10-serve-boot.service" "$rendered" \
+    "SWAP_USER_HOME=${swap_user_home}"
+  if ! sudo test -f /etc/systemd/system/gb10-serve-boot.service \
+     || ! cmp -s "$rendered" <(sudo cat /etc/systemd/system/gb10-serve-boot.service 2>/dev/null); then
+    log "Installing/updating gb10-serve-boot.service"
+    sudo cp "$rendered" /etc/systemd/system/gb10-serve-boot.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable gb10-serve-boot
+  else
+    log "gb10-serve-boot.service unchanged"
+  fi
+  rm -f "$rendered"
+}
+
+install_swapui() {
+  log "Installing swap-ui"
+
+  if [ ! -d "${HERE}/swap-ui/.venv" ]; then
+    log "Creating swap-ui venv"
+    (cd "${HERE}/swap-ui" && ./bootstrap.sh)
+  else
+    log "swap-ui venv already exists — refreshing dependencies"
+    "${HERE}/swap-ui/.venv/bin/pip" install --upgrade -r "${HERE}/swap-ui/requirements.txt"
+  fi
+
+  if [ "$NEED_FRONTEND_BUILD" = 1 ]; then
+    log "Building frontend"
+    (cd "${HERE}/swap-ui/frontend" && npm ci && npm run build)
+  else
+    log "Frontend dist is up to date — skipping build"
+  fi
+
+  local swap_user_home
+  swap_user_home="$(getent passwd "$SWAP_USER" | cut -d: -f6)"
+  [ -n "$swap_user_home" ] || die "no such user: $SWAP_USER (create it first, or re-answer the 'swap-ui service user' prompt)"
+
+  local rendered_unit="/tmp/gb10-swap.service.rendered.$$"
+  render_template "${HERE}/systemd/gb10-swap.service" "$rendered_unit" \
+    "SWAP_USER=${SWAP_USER}" \
+    "INSTALL_DIR=${INSTALL_DIR}" \
+    "SWAP_PORT=${SWAP_PORT}" \
+    "VLLM_SERVE_PORT=${VLLM_SERVE_PORT}" \
+    "CONFIGS_REPO=${CONFIGS_REPO_DEST}"
+
+  if ! sudo test -f /etc/systemd/system/gb10-swap.service \
+     || ! cmp -s "$rendered_unit" <(sudo cat /etc/systemd/system/gb10-swap.service 2>/dev/null); then
+    log "Installing/updating gb10-swap.service"
+    sudo cp "$rendered_unit" /etc/systemd/system/gb10-swap.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now gb10-swap
+  else
+    log "gb10-swap.service unchanged — leaving the running service alone"
+  fi
+  rm -f "$rendered_unit"
+
+  if [ ! -f /etc/gb10-swap.env ]; then
+    log "Writing /etc/gb10-swap.env"
+    if [ -n "${HF_TOKEN:-}" ]; then
+      printf 'HF_TOKEN=%s\n' "$HF_TOKEN" | sudo tee /etc/gb10-swap.env >/dev/null
+    else
+      sudo tee /etc/gb10-swap.env >/dev/null <<'EOF'
+# HF_TOKEN=hf_xxxxxxxx
+EOF
+    fi
+    sudo chown root:root /etc/gb10-swap.env
+    sudo chmod 640 /etc/gb10-swap.env
+  fi
+
+  render_boot_unit
+}
