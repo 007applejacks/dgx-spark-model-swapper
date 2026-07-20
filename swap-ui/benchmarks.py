@@ -33,8 +33,11 @@ from typing import Any
 @dataclass
 class BenchmarkConfig:
     """Configuration for the safe (serving + eval) benchmark suite."""
-    # Serving benchmark (online, with latency pressure)
-    serving_requests: int = 100
+    # Serving benchmark (online, with latency pressure). 100 -> 10: this is meant to be a quick
+    # sanity check (does the endpoint serve correctly under a little concurrency), not a
+    # statistically rigorous latency study — real percentiles need far more samples than this
+    # suite's job requires.
+    serving_requests: int = 10
     serving_concurrency: int = 4
     serving_input_len: int = 512
     serving_output_len: int = 128
@@ -46,9 +49,10 @@ class BenchmarkConfig:
     ])
     # 100/task (5 tasks) is ~24k loglikelihood requests — genuinely took over an hour against a
     # model capped at --max-num-seqs 4 (num_concurrent can't outrun the server's own concurrency
-    # limit). 20/task is ~5x fewer requests; still a meaningful sanity-check signal for a
-    # benchmark suite that's meant to run in a reasonable time, not a rigorous academic eval.
-    eval_limit: int | None = 20  # Limit per task for speed; None = full
+    # limit). Even 20/task took ~50 minutes end-to-end. 5/task is the practical floor for this
+    # still being a meaningful smoke-test signal rather than pure noise, while running in minutes
+    # instead of the better part of an hour.
+    eval_limit: int | None = 5  # Limit per task for speed; None = full
     eval_batch_size: int = 4
 
     # General
@@ -371,7 +375,7 @@ async def run_offline_throughput_benchmark(
     hf_cache_vol: str,
     model_repo: str,
     model_id: str,
-    num_prompts: int = 50,
+    num_prompts: int = 10,  # kept minimal — this is disruptive (model offline for the duration)
     input_len: int = 1024,
     output_len: int = 128,
     timeout_s: int = 600,
