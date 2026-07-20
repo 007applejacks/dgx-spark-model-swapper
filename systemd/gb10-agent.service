@@ -8,18 +8,21 @@ Wants=network-online.target
 Type=simple
 # Dedicated sandbox identity: own uid, NO sudo, NOT in the docker group. This is the whole point —
 # the chat/agent path (untrusted model output + web-search content) runs here, never as the
-# privileged swap-ui account. Create this user first (see agent/README.md's "One-time host setup").
-User=gb10-agent
-Group=gb10-agent
-WorkingDirectory=/home/gb10-agent/agent
-Environment=HOME=/home/gb10-agent
-Environment=SERVE_PORT=8002
+# privileged swap-ui account. install.sh creates this user; see agent/README.md for the manual steps.
+User=@@AGENT_USER@@
+Group=@@AGENT_USER@@
+WorkingDirectory=@@AGENT_HOME@@/agent
+Environment=HOME=@@AGENT_HOME@@
+Environment=HOST=127.0.0.1
+Environment=PORT=@@AGENT_PORT@@
+Environment=SERVE_PORT=@@VLLM_SERVE_PORT@@
 # Fronted by `tailscale serve --set-path /agent`? If tailscale forwards the prefix, uncomment:
 # Environment=STRIP_PREFIX=/agent
 EnvironmentFile=-/etc/gb10-agent.env
 # Loopback only — the daemon is NEVER exposed on the LAN; the tailnet HTTPS path mount (/agent) is
-# the sole ingress. The launcher wraps the daemon in `bws run` to resolve secrets at start.
-ExecStart=/home/gb10-agent/agent/run-with-secrets.sh
+# the sole ingress. The launcher wraps the daemon in `bws run` to resolve secrets at start, when
+# a Bitwarden Secrets Manager token is present; otherwise it execs the daemon directly.
+ExecStart=@@AGENT_HOME@@/agent/run-with-secrets.sh
 Restart=on-failure
 RestartSec=5
 
@@ -27,7 +30,7 @@ RestartSec=5
 NoNewPrivileges=yes
 # Whole filesystem read-only except the explicit write path below (and private /tmp).
 ProtectSystem=strict
-ReadWritePaths=/home/gb10-agent
+ReadWritePaths=@@AGENT_HOME@@
 PrivateTmp=yes
 ProtectControlGroups=yes
 ProtectKernelModules=yes
@@ -43,7 +46,7 @@ SystemCallArchitectures=native
 # Runs unprivileged and never needs to escalate — drop every capability.
 CapabilityBoundingSet=
 AmbientCapabilities=
-# Only needs IPv4/IPv6 sockets (talk to :8002 + outbound internet); deny the exotic families.
+# Only needs IPv4/IPv6 sockets (talk to :SERVE_PORT + outbound internet); deny the exotic families.
 RestrictAddressFamilies=AF_INET AF_INET6
 
 [Install]

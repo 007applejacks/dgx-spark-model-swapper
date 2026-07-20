@@ -9,9 +9,9 @@ RemainAfterExit=yes
 # Wait up to ~60s for the GPU to be queryable before touching the container, so it doesn't race the driver.
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do nvidia-smi -L >/dev/null 2>&1 && break; sleep 2; done'
 # Restart whichever model the swap-ui last loaded (state file written by gb10-swap.sh, owned by the
-# swap-ui's service user — update the path below to match your User= in gb10-swap.service).
+# swap-ui's service user — install.sh fills in @@SWAP_USER_HOME@@ to match User= in gb10-swap.service).
 # The container name is swap-vllm-<model-id>. If nothing was recorded yet, do nothing (bay stays empty).
-ExecStart=/bin/bash -c 'f=/home/deploy/.config/gb10-swap/last-model; \
+ExecStart=/bin/bash -c 'f=@@SWAP_USER_HOME@@/.config/gb10-swap/last-model; \
   if [ -r "$f" ] && id=$(cat "$f") && [ -n "$id" ]; then \
     echo "restoring last model: $id"; docker restart "swap-vllm-$id"; \
   else echo "no last-model recorded; leaving GPU bay empty"; fi'

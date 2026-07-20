@@ -3,20 +3,28 @@ Description=gb10 Model Swapper — web control plane for one-model-at-a-time vLL
 # Runs ON the box, from the deploy clone (adjust WorkingDirectory/ExecStart below to match wherever
 # you clone this repo, and User= to whatever account you run it as). Drives local docker/nvidia-smi
 # (GB10_LOCAL=1), so it needs docker up. It does NOT require a model to be loaded to start.
+#
+# The @@-wrapped placeholders below are filled in by ./install.sh — see docs/superpowers/specs/
+# 2026-07-20-installer-design.md. Hand-editing this file directly also works; each one is just a
+# plain value substitution, nothing installer-specific about the syntax itself.
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
 Type=simple
-User=deploy
-WorkingDirectory=/home/deploy/github/dgx-spark-model-swapper/swap-ui
+User=@@SWAP_USER@@
+WorkingDirectory=@@INSTALL_DIR@@/swap-ui
 Environment=GB10_LOCAL=1
+Environment=HOST=0.0.0.0
+Environment=PORT=@@SWAP_PORT@@
+Environment=SERVE_PORT=@@VLLM_SERVE_PORT@@
+Environment=CONFIGS_REPO=@@CONFIGS_REPO@@
 # Optional host-local secrets (HF_TOKEN for authenticated / gated / full-speed HF downloads).
 # Root-owned, 640, never committed. The leading '-' makes it optional (service starts without it).
 EnvironmentFile=-/etc/gb10-swap.env
 # Serves the built React dashboard + /api on all interfaces (LAN + tailnet). No auth (trusted network).
-ExecStart=/home/deploy/github/dgx-spark-model-swapper/swap-ui/.venv/bin/python /home/deploy/github/dgx-spark-model-swapper/swap-ui/app.py --host 0.0.0.0 --port 8080
+ExecStart=@@INSTALL_DIR@@/swap-ui/.venv/bin/python @@INSTALL_DIR@@/swap-ui/app.py
 Restart=on-failure
 RestartSec=5
 
