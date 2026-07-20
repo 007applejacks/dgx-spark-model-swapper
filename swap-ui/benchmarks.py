@@ -19,9 +19,12 @@ Two distinct things live here, deliberately kept apart:
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -143,30 +146,24 @@ def _extract_int(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _parse_lm_eval_output(output: str) -> dict[str, Any]:
-    """Parse lm-eval-harness output into structured results."""
-    result = {"tasks": {}, "summary": {}}
-    try:
-        for line in output.splitlines():
-            line = line.strip()
-            if line.startswith("{") and "results" in line:
-                result = json.loads(line)
-                break
-    except json.JSONDecodeError:
-        pass
-
-    for line in output.splitlines():
-        line = line.strip()
-        if "|" in line and any(t in line for t in ["acc", "f1", "em", "mc"]):
-            parts = [p.strip() for p in line.split("|") if p.strip()]
-            if len(parts) >= 3:
-                task, metric, value = parts[0], parts[1], parts[2]
-                try:
-                    result.setdefault("tasks", {})[task] = {metric: float(value)}
-                except ValueError:
-                    pass
-
-    return result
+def _parse_lm_eval_results_file(results_dir: str) -> dict[str, Any]:
+    """lm-eval writes results_<timestamp>.json under <output_path>/<model_name_sanitized>/ —
+    read the actual scores back from there. `--output_path -` does NOT mean stdout in this
+    lm-eval version: it creates a literal directory named "-" and writes the JSON there instead,
+    printing only progress bars and a "Saving results aggregated" line to stdout/stderr — nothing
+    resembling a parseable table or JSON ever reaches the subprocess's captured output."""
+    matches = glob.glob(os.path.join(results_dir, "**", "results_*.json"), recursive=True)
+    if not matches:
+        return {"tasks": {}, "summary": {}}
+    with open(max(matches, key=os.path.getmtime)) as f:
+        data = json.load(f)
+    tasks: dict[str, dict[str, float]] = {}
+    for task_name, metrics in (data.get("results") or {}).items():
+        tasks[task_name] = {
+            k: v for k, v in metrics.items()
+            if isinstance(v, (int, float)) and not k.endswith("_stderr,none") and k != "sample_len"
+        }
+    return {"tasks": tasks, "summary": {}}
 
 
 def _serving_container(served_name: str) -> str:
@@ -239,6 +236,7 @@ async def run_lm_eval_harness(
     fetch e.g. "nemotron-cascade-2-30b-a3b" from huggingface.co.
     """
     tasks = ",".join(config.eval_tasks)
+    results_dir = tempfile.mkdtemp(prefix="lm-eval-results-")
 
     cmd = [
         sys.executable, "-m", "lm_eval",
@@ -257,7 +255,10 @@ async def run_lm_eval_harness(
         f"max_gen_toks={config.serving_output_len},num_concurrent={config.eval_batch_size}",
         "--tasks", tasks,
         "--batch_size", str(config.eval_batch_size),
-        "--output_path", "-",  # stdout
+        # A real directory, NOT "-" — lm-eval doesn't treat "-" as stdout, it creates a literal
+        # directory named "-" and writes the results JSON there, printing nothing parseable to
+        # stdout/stderr. Read the file back after the process exits instead.
+        "--output_path", results_dir,
     ]
 
     if config.eval_limit:
@@ -276,13 +277,15 @@ async def run_lm_eval_harness(
         raw = stdout.decode(errors="replace") + "\n" + stderr.decode(errors="replace")
         if proc.returncode != 0:
             return {}, raw, f"lm-eval exited {proc.returncode}"
-        parsed = _parse_lm_eval_output(raw)
+        parsed = _parse_lm_eval_results_file(results_dir)
         parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
     except asyncio.TimeoutError:
         return {}, "", f"lm-eval timed out after {config.timeout_eval}s"
     except Exception as e:
         return {}, "", f"lm-eval failed: {e}"
+    finally:
+        shutil.rmtree(results_dir, ignore_errors=True)
 
 
 async def run_full_benchmark_suite(
