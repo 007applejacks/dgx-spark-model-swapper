@@ -217,12 +217,20 @@ async def run_vllm_serving_benchmark(
 async def run_lm_eval_harness(
     base_url: str,
     model: str,
+    model_repo: str,
     config: BenchmarkConfig,
     gpu_snapshot_fn,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run lm-eval-harness against the vLLM server via its OpenAI-compatible API, using the
     `local-completions` model type — an HTTP client, not a local model load, so this runs safely
-    in swap-ui's own venv without touching the GPU itself."""
+    in swap-ui's own venv without touching the GPU itself.
+
+    `model=` in --model_args is the API-request identifier (the SERVED_NAME) — lm-eval sends it
+    verbatim in each request's "model" field. That's a completely separate thing from the
+    tokenizer lm-eval loads locally to count/truncate tokens ("Remote tokenizer not supported"),
+    which needs the actual HF repo id (`tokenizer=`) — passing SERVED_NAME there 404s trying to
+    fetch e.g. "nemotron-cascade-2-30b-a3b" from huggingface.co.
+    """
     tasks = ",".join(config.eval_tasks)
 
     cmd = [
@@ -231,7 +239,8 @@ async def run_lm_eval_harness(
         # batch_size is passed via lm-eval's own --batch_size flag below, NOT here too — lm-eval's
         # CLI already forwards --batch_size into the model constructor, and having it in both
         # places raised "got multiple values for keyword argument 'batch_size'".
-        "--model_args", f"base_url={base_url}/v1,model={model},max_gen_toks={config.serving_output_len}",
+        "--model_args",
+        f"base_url={base_url}/v1,model={model},tokenizer={model_repo},max_gen_toks={config.serving_output_len}",
         "--tasks", tasks,
         "--batch_size", str(config.eval_batch_size),
         "--output_path", "-",  # stdout
@@ -266,6 +275,7 @@ async def run_full_benchmark_suite(
     base_url: str,
     model: str,
     model_id: str,
+    model_repo: str,
     config: BenchmarkConfig | None = None,
     gpu_snapshot_fn=lambda: {},
     on_progress: callable = None,
@@ -297,7 +307,7 @@ async def run_full_benchmark_suite(
         state["phase"] = "evaluation"
         on_progress(state)
 
-    evaluation = await run_lm_eval_harness(base_url, model, config, gpu_snapshot_fn)
+    evaluation = await run_lm_eval_harness(base_url, model, model_repo, config, gpu_snapshot_fn)
     result.evaluation, result.evaluation_raw, result.evaluation_error = evaluation
     result.evaluation_passed = result.evaluation_error is None
 

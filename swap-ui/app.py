@@ -1323,13 +1323,21 @@ async def api_test(_body: dict[str, Any] | None = None) -> dict[str, Any]:
     cur = _current_model()
     if not cur["loaded"] or not cur["healthy"] or not cur["served_name"]:
         raise HTTPException(400, "no healthy model is loaded — load one before testing")
+    # lm-eval needs the actual HF repo (not the served name) to resolve a tokenizer — best-effort
+    # fall back to served_name for an unregistered model, which won't resolve either, but there's
+    # no better option without a registry entry.
+    model_repo = cur["served_name"]
+    if cur["model_id"]:
+        p = _env_path_for(cur["model_id"])
+        if p is not None:
+            model_repo = _parse_env_file(p).get("SERVE_MODEL", model_repo)
     async with _test_lock:
         if TEST["state"] == "running":
             raise HTTPException(409, "a test run is already in progress")
         TEST.update({"id": TEST["id"] + 1, "model_id": cur["model_id"], "served_name": cur["served_name"],
                      "state": "running", "benchmark": {}, "report": {}, "experimental_cleared": False,
                      "started_at": int(time.time()), "finished_at": None})
-    asyncio.create_task(_run_tests(cur["model_id"], cur["served_name"]))
+    asyncio.create_task(_run_tests(cur["model_id"], cur["served_name"], model_repo))
     return {"accepted": True, "test": _test_public()}
 
 
@@ -1338,19 +1346,20 @@ def api_test_status() -> dict[str, Any]:
     return _test_public()
 
 
-async def _run_tests(model_id: str | None, served_name: str) -> None:
+async def _run_tests(model_id: str | None, served_name: str, model_repo: str) -> None:
     def on_update(state: dict[str, Any]) -> None:
         # state["result"] is a live BenchmarkResult dataclass, not yet JSON-safe — convert on every
         # progress tick, not just at the end, so a status poll mid-run doesn't 500 trying to encode it.
         r = state.get("result")
         TEST["benchmark"] = benchmarks.benchmark_result_to_dict(r) if r else {}
         TEST["report"] = state.get("report", {})
-    
+
     try:
         result = await benchmarks.run_full_benchmark_suite(
             f"http://localhost:{SERVE_PORT}",
             served_name,
             model_id or "",
+            model_repo,
             gpu_snapshot_fn=_gpu_state,
             on_progress=on_update,
         )
