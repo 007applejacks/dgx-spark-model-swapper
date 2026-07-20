@@ -119,10 +119,20 @@ export default function App() {
       // On the first poll after a page load, adopt an already-finished result WITHOUT popping the
       // panel open (only show it if a run is actively in progress). Prevents the report reappearing
       // on every refresh; new completions during the session still open it.
+      //
+      // Only record prevTestId.current here when the job is ALREADY done — if it's still running,
+      // leave prevTestId at its default so the "just finished" branch below still fires once this
+      // same job completes. Setting it unconditionally was a real bug: a job caught mid-run on the
+      // first poll got its id "pre-recorded", so the later id!==prevTestId check for that same job
+      // could never be true — the dialog stayed frozen on "running" forever once it actually
+      // finished, since nothing ever re-triggered setTestJob after that first poll.
       if (firstTestPoll.current) {
         firstTestPoll.current = false;
-        prevTestId.current = t.id;
-        if (t.state === "running") setTestJob(t);
+        if (t.state === "running") {
+          setTestJob(t);
+        } else {
+          prevTestId.current = t.id;
+        }
         return;
       }
       if (t.state === "running") {
@@ -149,11 +159,16 @@ export default function App() {
     try {
       const t = await api.benchmarkThroughputStatus();
       if (t.state === "idle") return;
-      // Same first-poll-adopts-without-popping-open pattern as pollTest.
+      // Same first-poll-adopts-without-popping-open pattern as pollTest — including the same fix:
+      // only pre-record prevThroughputId.current when the job is already done, otherwise this
+      // same job's later completion would never be detected (see pollTest's comment).
       if (firstThroughputPoll.current) {
         firstThroughputPoll.current = false;
-        prevThroughputId.current = t.id;
-        if (t.state === "running") setThroughputJob(t);
+        if (t.state === "running") {
+          setThroughputJob(t);
+        } else {
+          prevThroughputId.current = t.id;
+        }
         return;
       }
       if (t.state === "running") {
