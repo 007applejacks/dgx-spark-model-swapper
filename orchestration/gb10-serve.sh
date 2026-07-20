@@ -20,7 +20,11 @@ set -euo pipefail
 # unchanged.
 if [ -n "${SERVE_ENV_FILE:-}" ]; then
   [ -r "${SERVE_ENV_FILE}" ] || { echo "ERROR: SERVE_ENV_FILE not readable: ${SERVE_ENV_FILE}" >&2; exit 1; }
-  echo "sourcing model env: ${SERVE_ENV_FILE}"
+  # stderr, not stdout: --print-hash's caller captures this script's stdout via command
+  # substitution expecting ONLY the hash back — any incidental stdout line would corrupt that
+  # capture. swap-ui's own job-log capture merges stderr into stdout anyway, so nothing is lost
+  # there; this only changes what plain `$(...)` callers see.
+  echo "sourcing model env: ${SERVE_ENV_FILE}" >&2
   # shellcheck disable=SC1090
   . "${SERVE_ENV_FILE}"
 fi
@@ -53,6 +57,7 @@ while [ $# -gt 0 ]; do case "$1" in
   -m) MODEL_DIR="$2"; shift 2;; -n) SERVED_NAME="$2"; shift 2;;
   -q) QUANT="$2"; shift 2;; --max-model-len) MAX_LEN="$2"; shift 2;;
   --tools) TOOLS=1; shift;;       # opt-in tool-calling (qwen3_xml parser, validated 2026-07-03)
+  --print-hash) PRINT_HASH=1; shift;;  # resolve the recipe and echo its hash; no docker/GPU touched
   *) echo "unknown arg: $1" >&2; exit 1;;
 esac; done
 [ -z "$MODEL_DIR" ] || [ -z "$SERVED_NAME" ] && { echo "usage: gb10-serve.sh -m <repo-or-dir> -n <name> [-q auto|modelopt_fp4|fp8] [--tools]"; exit 1; }
@@ -87,6 +92,28 @@ KV_ARG="${KV_ARG-"--kv-cache-dtype bfloat16"}"
 # JSON single-quoted to survive the gb10_ssh hop — verify it reaches vllm intact on FIRST re-serve.
 GENCFG_ARG="${GENCFG_ARG-"--override-generation-config '{\"temperature\": 0.6, \"presence_penalty\": 0.0}'"}"
 
+# RUN_ARGS is the single source of truth for "what does this recipe actually launch" — built once
+# here, used BOTH to compute RECIPE_HASH below AND as the literal docker run tail further down, so
+# the hash can never drift from the command it's supposed to describe. Hashing the fully-resolved
+# string (rather than diffing individual recipe vars) means ANY change that affects the running
+# container — a new GPU_UTIL, a VLLM_IMAGE bump in containers.env, a hand-edited EXTRA_ARGS — is
+# caught the same way, with no per-field allowlist to keep in sync as new knobs get added.
+RUN_ARGS="--gpus all --ipc=host \
+    --ulimit memlock=-1 --ulimit stack=67108864 \
+    -p ${SERVE_PORT}:${SERVE_PORT} \
+    -v ${HF_CACHE_VOL}:/root/.cache/huggingface \
+    -v ${OUT_DIR_HOST}:/out:ro \
+    '${VLLM_IMAGE}' \
+    --model '${MODEL_DIR}' \
+      --served-model-name '${SERVED_NAME}' \
+      --port ${SERVE_PORT} \
+      --max-model-len ${MAX_LEN} \
+      --gpu-memory-utilization ${GPU_UTIL} \
+      --trust-remote-code --enable-prefix-caching \
+      ${REASONING_ARG} ${KV_ARG} ${QUANT_ARG} ${TOOL_ARG} ${GENCFG_ARG} ${SPEC_ARG} ${COMPILE_ARG} ${EXTRA_ARGS}"
+RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
+[ "${PRINT_HASH:-0}" = 1 ] && { echo "$RECIPE_HASH"; exit 0; }
+
 # CANONICAL qwen36-27b-dense serve (reproduces the validated default stack; name = $SERVE_CONTAINER
 # in containers.env):
 #   gb10-serve.sh -m nvidia/Qwen3.6-27B-NVFP4 -n qwen36-27b-dense -q modelopt --tools
@@ -100,28 +127,29 @@ if gb10_container_running "$SERVE_CONTAINER"; then
   exit 1
 fi
 
+NEED_CREATE=1
 if gb10_container_exists "$SERVE_CONTAINER"; then
-  echo "starting existing ${SERVE_CONTAINER} ..."
-  gb10_ssh "docker start '${SERVE_CONTAINER}'"
-else
+  EXISTING_HASH="$(gb10_container_label "$SERVE_CONTAINER" gb10.recipe-hash)"
+  if [ "$EXISTING_HASH" = "$RECIPE_HASH" ]; then
+    echo "starting existing ${SERVE_CONTAINER} (recipe unchanged) ..."
+    gb10_ssh "docker start '${SERVE_CONTAINER}'"
+    NEED_CREATE=0
+  else
+    # Docker bakes CMD/labels in at `docker create` time and never lets you change them on an
+    # existing container — a plain `docker start` would keep serving whatever recipe (GPU_UTIL,
+    # quant, spec-decode, ...) was in effect the LAST time this container was created, silently
+    # ignoring any edits to the .env since. Recreate it instead so the new recipe actually takes.
+    echo "recipe changed since ${SERVE_CONTAINER} was created (or its recipe is unknown) — recreating ..."
+    gb10_ssh "docker rm '${SERVE_CONTAINER}'"
+  fi
+fi
+if [ "$NEED_CREATE" = 1 ]; then
   echo "creating ${SERVE_CONTAINER} (vLLM ${VLLM_IMAGE}, quant=${QUANT}, tools=${TOOLS}) ..."
   # vLLM OpenAI API on :SERVE_PORT. NVIDIA-recommended docker flags (--ipc=host + memlock/stack
   # ulimits) are required for vLLM on the GB10. NOTE: vllm/vllm-openai's entrypoint IS the API
   # server already — CMD args are `--model <repo> ...`, NOT `vllm serve <repo> ...` (that
   # subcommand form was only correct for the old nvcr.io/nvidia/vllm image).
-  gb10_ssh "docker run -d --name '${SERVE_CONTAINER}' --gpus all --ipc=host \
-      --ulimit memlock=-1 --ulimit stack=67108864 \
-      -p ${SERVE_PORT}:${SERVE_PORT} \
-      -v ${HF_CACHE_VOL}:/root/.cache/huggingface \
-      -v ${OUT_DIR_HOST}:/out:ro \
-      '${VLLM_IMAGE}' \
-      --model '${MODEL_DIR}' \
-        --served-model-name '${SERVED_NAME}' \
-        --port ${SERVE_PORT} \
-        --max-model-len ${MAX_LEN} \
-        --gpu-memory-utilization ${GPU_UTIL} \
-        --trust-remote-code --enable-prefix-caching \
-        ${REASONING_ARG} ${KV_ARG} ${QUANT_ARG} ${TOOL_ARG} ${GENCFG_ARG} ${SPEC_ARG} ${COMPILE_ARG} ${EXTRA_ARGS}"
+  gb10_ssh "docker run -d --name '${SERVE_CONTAINER}' --label 'gb10.recipe-hash=${RECIPE_HASH}' ${RUN_ARGS}"
 fi
 
 wait_health "$GB10_HEALTH" "${SERVE_TIMEOUT:-900}" "$SERVE_CONTAINER"

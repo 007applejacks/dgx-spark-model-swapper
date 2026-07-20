@@ -55,6 +55,15 @@ gb10_container_running() {
   [ -n "$(gb10_ssh "docker ps -q -f name=^$1\$")" ]
 }
 
+# Read a docker label off a container. Empty string if the container or label doesn't exist —
+# `|| true` on the remote side keeps a missing container from aborting the caller under set -e; a
+# container that predates a given label (e.g. any container created before gb10.recipe-hash was
+# introduced) resolves the Go-template map index to Go's zero value, also empty, so "no label yet"
+# and "no container yet" are indistinguishable — both correctly read as "unknown, don't trust it".
+gb10_container_label() {  # <container> <label-key>
+  gb10_ssh "docker inspect --format '{{index .Config.Labels \"$2\"}}' '$1' 2>/dev/null || true"
+}
+
 # Poll an HTTP health endpoint (from the box's own network) until 200 or timeout. If a container
 # name is given, ALSO fail fast (return 2) the moment that container is no longer running — a model
 # that crashes on startup (bad recipe, unsupported arch) exits its container in seconds, so there's

@@ -55,14 +55,22 @@ if [ "${GB10_LOCAL:-0}" = 1 ]; then
   export GB10_HEALTH="http://localhost:${SERVE_PORT}/health"
 fi
 
-# --- 1. Idempotency: is the target already loaded and healthy? -------------------------------
+# --- 1. Idempotency: is the target already loaded, healthy, AND on the current recipe? ------
+# "Already loaded and healthy" alone isn't enough to NOOP on — a recipe edit (GPU_UTIL, quant,
+# extra args, ...) doesn't touch the running container, so a health-only check would silently
+# skip applying it. Resolve what THIS recipe would hash to (--print-hash: same computation
+# gb10-serve.sh uses when it actually creates a container, so this can't drift from that decision)
+# and compare against the running container's own label before trusting "nothing to do".
+TARGET_HASH="$(SERVE_ENV_FILE="$ENV_FILE" GB10_LOCAL="${GB10_LOCAL:-0}" "${HERE}/gb10-serve.sh" --print-hash)"
 if gb10_container_running "$SERVE_CONTAINER"; then
-  if gb10_ssh "curl -fsS -o /dev/null 'http://localhost:${SERVE_PORT}/health'" 2>/dev/null; then
-    echo "target ${SERVED_NAME} already running and healthy — nothing to do."
+  RUNNING_HASH="$(gb10_container_label "$SERVE_CONTAINER" gb10.recipe-hash)"
+  if [ "$RUNNING_HASH" = "$TARGET_HASH" ] \
+     && gb10_ssh "curl -fsS -o /dev/null 'http://localhost:${SERVE_PORT}/health'" 2>/dev/null; then
+    echo "target ${SERVED_NAME} already running, healthy, and on the current recipe — nothing to do."
     echo "RESULT NOOP ${SERVED_NAME}"
     exit 0
   fi
-  echo "target container is up but not healthy — restarting it clean."
+  echo "target container is up but its recipe changed (or it's unhealthy) — restarting it clean."
 fi
 
 # --- 2. Stop every vLLM SERVE container before the target starts ------------------------------
