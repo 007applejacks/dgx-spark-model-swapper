@@ -41,7 +41,11 @@ class BenchmarkConfig:
     eval_tasks: list[str] = field(default_factory=lambda: [
         "mmlu", "gsm8k", "bbh", "hellaswag", "truthfulqa_mc2"
     ])
-    eval_limit: int | None = 100  # Limit per task for speed; None = full
+    # 100/task (5 tasks) is ~24k loglikelihood requests — genuinely took over an hour against a
+    # model capped at --max-num-seqs 4 (num_concurrent can't outrun the server's own concurrency
+    # limit). 20/task is ~5x fewer requests; still a meaningful sanity-check signal for a
+    # benchmark suite that's meant to run in a reasonable time, not a rigorous academic eval.
+    eval_limit: int | None = 20  # Limit per task for speed; None = full
     eval_batch_size: int = 4
 
     # General
