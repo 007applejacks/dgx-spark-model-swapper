@@ -34,11 +34,12 @@ from typing import Any, Callable
 @dataclass
 class BenchmarkConfig:
     """Configuration for the safe (serving + eval) benchmark suite."""
-    # Serving benchmark (online, with latency pressure). 100 -> 10: this is meant to be a quick
-    # sanity check (does the endpoint serve correctly under a little concurrency), not a
-    # statistically rigorous latency study — real percentiles need far more samples than this
-    # suite's job requires.
-    serving_requests: int = 10
+    # Serving benchmark (online, with latency pressure). 100 -> 10 -> 30: 10 was a quick sanity
+    # check (does the endpoint serve correctly under a little concurrency) but its throughput
+    # number swung 3x run-to-run on identical config (17.98 vs 58.82 tok/s, same image, back to
+    # back) — too noisy to mean anything. 30 trades a bit more runtime for a less useless number;
+    # still not a statistically rigorous latency study, just less of a coin flip.
+    serving_requests: int = 30
     serving_concurrency: int = 4
     serving_input_len: int = 512
     serving_output_len: int = 128
