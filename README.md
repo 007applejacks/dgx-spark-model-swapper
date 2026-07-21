@@ -17,7 +17,7 @@ endpoint.
 
 ## Screenshots
 
-![Full dashboard: GPU bay, models registry, UPS telemetry, disk/updates, and danger zone](assets/dashboard.png)
+<img width="1282" height="779" alt="Dashboard" src="https://github.com/user-attachments/assets/72c0e720-454b-478f-b77d-811c16bc6a9c" />
 
 ## Features
 
