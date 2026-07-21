@@ -503,6 +503,8 @@ async def api_swap(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(404, f"unknown model: {model_id}")
     if THROUGHPUT["state"] == "running":
         raise HTTPException(409, "an offline throughput benchmark is unloading/reloading the model — try again once it finishes")
+    if TEST["state"] == "running":
+        raise HTTPException(409, "a model test is running against the currently-served model — try again once it finishes")
     async with _job_lock:
         if JOB["state"] == "running":
             raise HTTPException(409, f"a swap to {JOB['model_id']} is already in progress")
