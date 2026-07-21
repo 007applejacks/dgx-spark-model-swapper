@@ -55,7 +55,14 @@ class BenchmarkConfig:
     # still being a meaningful smoke-test signal rather than pure noise, while running in minutes
     # instead of the better part of an hour.
     eval_limit: int | None = 5  # Limit per task for speed; None = full
-    eval_batch_size: int = 4
+    # 4 -> 2 (2026-07-21): eval_batch_size sets lm-eval's num_concurrent, i.e. how many
+    # loglikelihood requests (each computing prompt_logprobs over a full few-shot prompt) run at
+    # once. On nemotron3-super-120b -- a 75GB model with only ~5x KV-cache concurrency headroom
+    # at GPU_UTIL=0.80 -- 4 concurrent eval requests pushed the engine into repeated NVRM
+    # "Out of memory" driver errors and eventually a silent EngineCore crash mid-eval (no Python
+    # exception, just gone). 2 is safer margin; no config knob for a lighter setting on just the
+    # tight models yet, so this is a global default change.
+    eval_batch_size: int = 2
 
     # General
     timeout_serving: int = 600      # 10 min max for serving bench
