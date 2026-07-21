@@ -271,7 +271,6 @@ async def run_vllm_serving_benchmark(
     model: str,
     model_repo: str,
     config: BenchmarkConfig,
-    gpu_snapshot_fn,
     on_progress_line: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run `vllm bench serve` (vLLM 0.24's online serving benchmark CLI) against the already-
@@ -303,7 +302,6 @@ async def run_vllm_serving_benchmark(
         if not ok:
             return {}, raw, "vllm bench serve failed (non-zero exit)"
         parsed = _parse_vllm_benchmark_output(raw)
-        parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
     except asyncio.TimeoutError:
         return {}, "", f"Serving benchmark timed out after {config.timeout_serving}s"
@@ -316,7 +314,6 @@ async def run_lm_eval_harness(
     model: str,
     model_repo: str,
     config: BenchmarkConfig,
-    gpu_snapshot_fn,
     on_progress_line: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run lm-eval-harness against the vLLM server via its OpenAI-compatible API, using the
@@ -365,7 +362,6 @@ async def run_lm_eval_harness(
         if not ok:
             return {}, raw, "lm-eval failed (non-zero exit)"
         parsed = _parse_lm_eval_results_file(results_dir)
-        parsed["gpu"] = gpu_snapshot_fn()
         return parsed, raw, None
     except asyncio.TimeoutError:
         return {}, "", f"lm-eval timed out after {config.timeout_eval}s"
@@ -409,7 +405,7 @@ async def run_full_benchmark_suite(
         on_progress(state)
 
     serving = await run_vllm_serving_benchmark(
-        base_url, model, model_repo, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
+        base_url, model, model_repo, config, on_progress_line=_progress_cb,
     )
     result.serving, result.serving_raw, result.serving_error = serving
     result.serving_passed = result.serving_error is None and result.serving.get("failed_requests", 0) == 0
@@ -423,7 +419,7 @@ async def run_full_benchmark_suite(
         on_progress(state)
 
     evaluation = await run_lm_eval_harness(
-        base_url, model, model_repo, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
+        base_url, model, model_repo, config, on_progress_line=_progress_cb,
     )
     result.evaluation, result.evaluation_raw, result.evaluation_error = evaluation
     result.evaluation_passed = result.evaluation_error is None
