@@ -1299,18 +1299,20 @@ async def _run_download(repo: str) -> None:
 
 
 # --- benchmark tests (vLLM standard + lm-eval-harness) --------------------------------------
-def _set_experimental(path: Path, value: str) -> None:
-    """Rewrite EXPERIMENTAL=<value> in a recipe .env in place (used to clear the flag on a pass)."""
+def _set_env_key(path: Path, key: str, value: str) -> None:
+    """Rewrite KEY="value" in a recipe .env in place (appends the line if not already present).
+    Only touches the file on disk — same as EXPERIMENTAL-clearing already did, this leaves the
+    recipe as an uncommitted draft for a human to review via Promote, not an auto-commit."""
     out: list[str] = []
     found = False
     for line in path.read_text().splitlines():
-        if re.match(r"^\s*EXPERIMENTAL=", line):
-            out.append(f'EXPERIMENTAL="{value}"')
+        if re.match(rf"^\s*{re.escape(key)}=", line):
+            out.append(f'{key}="{value}"')
             found = True
         else:
             out.append(line)
     if not found:
-        out.append(f'EXPERIMENTAL="{value}"')
+        out.append(f'{key}="{value}"')
     path.write_text("\n".join(out) + "\n")
 
 
@@ -1376,12 +1378,16 @@ async def _run_tests(model_id: str | None, served_name: str, model_repo: str) ->
         TEST["benchmark"] = benchmarks.benchmark_result_to_dict(result) if result else {}
         TEST["report"] = TEST["benchmark"]
 
-        # All non-error phases passed → clear the experimental flag, but ONLY if it was set
+        # All non-error phases passed → update the card with what was actually measured.
         if result and result.all_passed and model_id:
             p = _env_path_for(model_id)
-            if p is not None and _parse_env_file(p).get("EXPERIMENTAL", "0") == "1":
-                _set_experimental(p, "0")
-                TEST["experimental_cleared"] = True
+            if p is not None:
+                if _parse_env_file(p).get("EXPERIMENTAL", "0") == "1":
+                    _set_env_key(p, "EXPERIMENTAL", "0")
+                    TEST["experimental_cleared"] = True
+                tok_s = result.serving.get("throughput_tok_s")
+                if isinstance(tok_s, (int, float)):
+                    _set_env_key(p, "UI_SPEED", f"~{tok_s:.1f} tok/s (measured {time.strftime('%Y-%m-%d')})")
         TEST["state"] = "done"
     except Exception as exc:  # noqa: BLE001
         TEST["report"] = {"error": str(exc)}

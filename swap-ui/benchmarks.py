@@ -121,8 +121,25 @@ def _parse_vllm_benchmark_output(output: str) -> dict[str, Any]:
     result = {}
     for line in output.splitlines():
         line = line.strip()
-        if "Throughput:" in line or "throughput:" in line.lower():
-            # `vllm bench throughput`'s summary line has THREE numbers, e.g.:
+        # `vllm bench serve`'s exact summary format (from vllm/benchmarks/serve.py's own
+        # "{:<40} {:<10.2f}".format(...) print calls — read from source, not guessed, after the
+        # requests/s-vs-tok/s mixup below). "Output token throughput (tok/s):" only appears in the
+        # generate-mode this suite runs; the label never contains a bare "Throughput:" substring,
+        # so this branch and the `vllm bench throughput` branch below never collide.
+        if "Output token throughput (tok/s):" in line:
+            v = _extract_float(line.split(":", 1)[1])
+            if v is not None:
+                result["throughput_tok_s"] = v
+        elif "Total token throughput (tok/s):" in line:
+            v = _extract_float(line.split(":", 1)[1])
+            if v is not None:
+                result["total_tokens_per_s"] = v
+        elif "Request throughput (req/s):" in line:
+            v = _extract_float(line.split(":", 1)[1])
+            if v is not None:
+                result["requests_per_s"] = v
+        elif "Throughput:" in line:
+            # `vllm bench throughput`'s (offline) summary line has THREE numbers on one line, e.g.:
             #   "Throughput: 0.27 requests/s, 311.76 total tokens/s, 34.64 output tokens/s"
             # Naively taking the first float after "Throughput:" (the old code) silently grabbed
             # requests/s instead of the actual generation rate — a real bug caught because 0.27
@@ -252,6 +269,7 @@ async def _run_streaming(
 async def run_vllm_serving_benchmark(
     base_url: str,
     model: str,
+    model_repo: str,
     config: BenchmarkConfig,
     gpu_snapshot_fn,
     on_progress_line: Callable[[str], None] | None = None,
@@ -264,10 +282,15 @@ async def run_vllm_serving_benchmark(
         "docker", "exec", "-e", "VLLM_USE_V1=1", _serving_container(model),
         "vllm", "bench", "serve",
         "--base-url", base_url,
-        # No --model: that's the HF repo/tokenizer path to vLLM's bench tool, not just a label —
+        # No --model: that's the served-model label used in each request, not the tokenizer path —
         # passing the served name here made it try (and 404) fetching "nemotron-cascade-2-30b-a3b"
         # from huggingface.co. Omitting it makes the tool fetch the actual served model from the
-        # server's own /v1/models, which is exactly what we want (whatever's currently loaded).
+        # server's own /v1/models for request payloads, which is exactly what we want.
+        # --tokenizer IS the real HF repo, though (a separate concern from --model): per vLLM's own
+        # source (vllm/benchmarks/serve.py), the "Output/Total token throughput (tok/s):" summary
+        # lines only print `if tokenizer:` — without this, the serving benchmark "passed" but
+        # reported zero throughput metrics at all, silently.
+        "--tokenizer", model_repo,
         "--num-prompts", str(config.serving_requests),
         "--max-concurrency", str(config.serving_concurrency),
         "--input-len", str(config.serving_input_len),
@@ -386,7 +409,7 @@ async def run_full_benchmark_suite(
         on_progress(state)
 
     serving = await run_vllm_serving_benchmark(
-        base_url, model, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
+        base_url, model, model_repo, config, gpu_snapshot_fn, on_progress_line=_progress_cb,
     )
     result.serving, result.serving_raw, result.serving_error = serving
     result.serving_passed = result.serving_error is None and result.serving.get("failed_requests", 0) == 0
