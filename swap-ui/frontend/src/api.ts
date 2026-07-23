@@ -281,6 +281,7 @@ export const api = {
   swapCancel: () => fetch("/api/swap/cancel", { method: "POST" }).then(j<{ cancelling: boolean }>),
   unload: () => fetch("/api/unload", { method: "POST" }).then(j<{ unloaded: string[] }>),
   reboot: () => fetch("/api/reboot", { method: "POST" }).then(j<{ rebooting: boolean }>),
+  poweroff: () => fetch("/api/poweroff", { method: "POST" }).then(j<{ poweringOff: boolean }>),
 
   test: () => fetch("/api/test", { method: "POST" }).then(j<{ accepted: boolean; test: TestJob }>),
   testStatus: () => fetch("/api/test/status").then(j<TestJob>),

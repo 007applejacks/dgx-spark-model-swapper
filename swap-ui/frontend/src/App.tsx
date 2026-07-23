@@ -68,6 +68,7 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [rebooting, setRebooting] = useState(false);
+  const [poweringOff, setPoweringOff] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const importParam =
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("import") : null;
@@ -268,6 +269,16 @@ export default function App() {
     }
   }, []);
 
+  const onPowerOff = useCallback(async () => {
+    setPoweringOff(true);
+    setNotice({ tone: "coral", text: "gb10 is powering off — bring it back up when you're ready to reconnect" });
+    try {
+      await api.poweroff();
+    } catch {
+      /* the box is going down; the request may not return cleanly */
+    }
+  }, []);
+
   const onRemoveConfirm = useCallback(
     async (weights: boolean) => {
       if (!removeTarget) return;
@@ -344,7 +355,7 @@ export default function App() {
   const swapping = status?.swap.state === "running";
   const testing = testJob?.state === "running";
   const throughputBenchmarking = throughputJob?.state === "running";
-  const busy = swapping || rebooting || testing || throughputBenchmarking;
+  const busy = swapping || rebooting || poweringOff || testing || throughputBenchmarking;
   const sortedModels = useMemo(
     () => sortModels(models, sortBy, status?.current.model_id),
     [models, sortBy, status?.current.model_id],
@@ -448,7 +459,12 @@ export default function App() {
 
         <UpdatesPanel />
 
-        <DangerZone onReboot={onReboot} rebooting={rebooting} />
+        <DangerZone
+          onReboot={onReboot}
+          rebooting={rebooting}
+          onPowerOff={onPowerOff}
+          poweringOff={poweringOff}
+        />
       </main>
 
       {notice && (
