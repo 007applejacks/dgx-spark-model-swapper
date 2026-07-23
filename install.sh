@@ -331,8 +331,8 @@ verify_and_summarize() {
     echo "      sudo tailscale serve --bg --set-path /agent http://127.0.0.1:${AGENT_PORT}"
   fi
   echo
-  echo " 2. Passwordless reboot button (needed for the dashboard's Reboot action):"
-  echo "      echo '${SWAP_USER} ALL=(root) NOPASSWD: /sbin/reboot' | sudo tee /etc/sudoers.d/gb10-swap-reboot"
+  echo " 2. Passwordless reboot/power-off buttons (needed for the dashboard's Reboot/Power off actions):"
+  echo "      echo '${SWAP_USER} ALL=(root) NOPASSWD: /sbin/reboot, /sbin/poweroff' | sudo tee /etc/sudoers.d/gb10-swap-reboot"
   echo "      sudo chmod 440 /etc/sudoers.d/gb10-swap-reboot"
   echo
   echo " 3. HuggingFace token (add later for authenticated/full-speed model downloads):"
