@@ -164,22 +164,22 @@ internet), and the `--bg` config persists across reboots (stored in tailscaled s
 file). Requires HTTPS/MagicDNS certs enabled for the tailnet (admin console). The plain `:8080`
 LAN/tailnet endpoint keeps working alongside it.
 
-### Reboot button — sudoers requirement
+### Reboot / power off buttons — sudoers requirement
 
-The Reboot button runs `sudo /sbin/reboot`. Grant the service's user (`deploy` by default — see
-`systemd/gb10-swap.service`) passwordless rights for just that command. Install a sudoers drop-in
-on the box:
+The Reboot and Power off buttons run `sudo /sbin/reboot` and `sudo /sbin/poweroff` respectively.
+Grant the service's user (`deploy` by default — see `systemd/gb10-swap.service`) passwordless
+rights for just those two commands. Install a sudoers drop-in on the box:
 
 ```
 # /etc/sudoers.d/gb10-swap-reboot   (chmod 440, edit via visudo -f)
-deploy ALL=(root) NOPASSWD: /sbin/reboot
+deploy ALL=(root) NOPASSWD: /sbin/reboot, /sbin/poweroff
 ```
 
-**Without it, this fails silently, not loudly**: `/api/reboot` fires `sudo /sbin/reboot` in the
-background and returns `{"rebooting": true}` immediately without checking whether `sudo` actually
-succeeded, and the dashboard just optimistically shows "Rebooting…" — so a missing sudoers rule
-means the button appears to work but the box never actually reboots, with no error surfaced
-anywhere. Set this up before you need it.
+**Without it, this fails silently, not loudly**: `/api/reboot` and `/api/poweroff` each fire their
+`sudo` command in the background and return a success response immediately without checking
+whether `sudo` actually succeeded, and the dashboard just optimistically shows "Rebooting…" or
+"Powering off…" — so a missing sudoers rule means the button appears to work but the box never
+actually reboots or powers off, with no error surfaced anywhere. Set this up before you need it.
 
 ### Boot restore
 

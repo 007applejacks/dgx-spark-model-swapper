@@ -804,6 +804,17 @@ async def api_reboot() -> dict[str, Any]:
     return {"rebooting": True}
 
 
+@app.post("/api/poweroff")
+async def api_poweroff() -> dict[str, Any]:
+    # Fully shut gb10 down — unlike reboot, it does NOT come back on its own. Needs passwordless
+    # sudo for /sbin/poweroff (see README). Fire-and-forget; this process dies with the box. We
+    # schedule it slightly delayed so the HTTP response flushes.
+    if not shutil.which("sudo"):
+        raise HTTPException(500, "sudo not available")
+    subprocess.Popen(["bash", "-c", "sleep 1; sudo /sbin/poweroff"])
+    return {"poweringOff": True}
+
+
 # --- swap job machinery ---------------------------------------------------------------------
 def _job_reset(model_id: str) -> None:
     JOB.update({
