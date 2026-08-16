@@ -935,30 +935,43 @@ def _propose_recipe(repo: str, cfg: dict[str, Any] | None) -> dict[str, Any]:
         parser = "qwen3"
         warnings.append(f"Unknown architecture '{arch or '?'}' — defaulted reasoning parser to qwen3; verify.")
 
-    # Context length.
+    # Context length. Multimodal configs (e.g. Qwen3.5/3.8's Qwen3_5ForConditionalGeneration) nest
+    # this under text_config instead of top-level — check both, top-level first.
     max_pos = (cfg or {}).get("max_position_embeddings")
+    nested_pos = ((cfg or {}).get("text_config") or {}).get("max_position_embeddings")
+    if not isinstance(max_pos, int) or max_pos <= 0:
+        max_pos = nested_pos
     if isinstance(max_pos, int) and max_pos > 0:
         max_len = min(max_pos, 262144)
         if max_pos > 262144:
             warnings.append(f"Native context {max_pos} capped to 262144 to bound KV memory.")
     else:
         max_len = 131072
-        warnings.append("No max_position_embeddings in config — defaulted context to 131072.")
+        warnings.append("No max_position_embeddings in config (checked top-level and text_config) "
+                         "— defaulted context to 131072.")
 
-    # Quantization.
+    # Quantization. Go ONLY off quantization_config.quant_method — the actual packaging format —
+    # never off repo-name/blob substring matching. That previously mapped e.g. a compressed-tensors
+    # checkpoint (unsloth/Qwen3.8-27B-NVFP4: mixed FP8/NVFP4 via llm-compressor) to "modelopt" just
+    # because "nvfp4" appeared in the config text, which is a DIFFERENT vLLM quant backend/loader
+    # and fails to load. quant_method is ground truth; when it's compressed-tensors (or anything
+    # else vLLM can self-detect), leave QUANT=auto so vLLM reads quantization_config itself instead
+    # of us re-deriving and possibly mis-guessing the backend name.
     qc = (cfg or {}).get("quantization_config") or {}
     qmethod = str(qc.get("quant_method", "")).lower()
-    blob = f"{name} {qmethod}".lower()
-    if "modelopt" in qmethod or "nvfp4" in blob or "fp4" in blob:
+    if "modelopt" in qmethod:
         quant = "modelopt"
-    elif "fp8" in blob:
-        quant = "fp8"
     elif "awq" in qmethod:
         quant = "awq"
+    elif "fp8" in qmethod and "compressed" not in qmethod:
+        quant = "fp8"
     else:
         quant = "auto"
         if not qc:
             warnings.append("No quantization_config — serving unquantized (auto); large models may not fit.")
+        elif qmethod and qmethod not in ("modelopt", "awq", "fp8"):
+            warnings.append(f"quant_method='{qmethod}' — left QUANT=auto for vLLM to self-detect "
+                             f"(may be a mixed-precision recipe; verify it loads before trusting).")
 
     if any(k in (cfg or {}) for k in ("num_experts", "num_local_experts", "n_routed_experts")):
         warnings.append("MoE model — consider setting EXTRA_ARGS='--max-num-seqs 4' if memory is tight.")
