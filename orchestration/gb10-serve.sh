@@ -77,9 +77,14 @@ TOOL_ARG="";  [ "$TOOLS" = 1 ] && TOOL_ARG="--enable-auto-tool-choice --tool-cal
 
 # Speculative decoding: native MTP, k=3, on by default. `cudagraph_mode` MUST stay PIECEWISE
 # whenever SPEC_ARG is set — vLLM's default (FULL_AND_PIECEWISE) corrupts tool-call output under
-# spec decode on this hardware/model combo (dropped/malformed tool calls). k=4 was tested and
-# crashed the engine outright (EngineDeadError) — stick with k=3 unless you've independently
-# re-validated a higher depth. Safe to clear COMPILE_ARG only if SPEC_ARG is also cleared.
+# spec decode on this hardware/model combo (dropped/malformed tool calls). k=4 was promoted to
+# production once (2026-07-08) and crashed under real load (EngineDeadError, device-side assert in
+# the GDN causal_conv1d_update kernel) -- but that run was ALSO silently serving fp8_e4m3 KV cache
+# with uncalibrated scales (the auto-KV bug fixed below), never isolated as a separate variable, so
+# k=4-the-cause was never actually confirmed vs. the KV bug. Nobody has re-run k=4 since the KV fix
+# landed. Stick with k=3 as the validated default, but treat k=4 as "unconfirmed", not "proven
+# unsafe" -- a fresh isolated test (synthetic gate + real load) is fair game if revisited. Safe to
+# clear COMPILE_ARG only if SPEC_ARG is also cleared.
 SPEC_ARG="${SPEC_ARG-"--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'"}"
 COMPILE_ARG="${COMPILE_ARG-"--compilation-config '{\"cudagraph_mode\":\"PIECEWISE\"}'"}"
 
