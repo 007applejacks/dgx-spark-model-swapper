@@ -119,13 +119,17 @@ RUN_ARGS="--gpus all --ipc=host \
 RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 [ "${PRINT_HASH:-0}" = 1 ] && { echo "$RECIPE_HASH"; exit 0; }
 
-# CANONICAL qwen36-27b-dense serve (reproduces the validated default stack; name = $SERVE_CONTAINER
-# in containers.env):
-#   gb10-serve.sh -m nvidia/Qwen3.6-27B-NVFP4 -n qwen36-27b-dense -q modelopt --tools
-# (-q modelopt matches the checkpoint's explicit quant; QUANT=auto also resolves to modelopt for an
-# NVFP4 checkpoint, so it's equivalent. --tools enables the tool-call parser.)
-# Brings up: vLLM v0.24.0 (see containers.env) + MTP(k=3) spec decode + forced PIECEWISE cudagraph
-# + explicit bf16 KV cache (see KV_ARG above) + 0.85 GPU utilization (see GPU_UTIL above).
+# BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B-FP8):
+#   gb10-serve.sh -m Qwen/Qwen3.8-27B-FP8 -n qwen3.8-27b-fp8 --tools
+# CAUTION: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above --
+# MTP(k=3) spec-decode ON, forced PIECEWISE cudagraph -- which is NOT what's actually validated
+# for Qwen3.8-27B-FP8: the live qwen3.8-27b-fp8.env (in gb10-model-configs) explicitly clears
+# SPEC_ARG/COMPILE_ARG, because MTP(k=3) was found to badly corrupt loglikelihood/logprob scoring
+# on this model family (measured: MMLU ~45% with spec-decode on vs ~84% off, 2026-09-02 — see
+# git history). Always prefer SERVE_ENV_FILE=<model>.env over the bare fallback for real use;
+# this path exists for standalone/legacy invocations only.
+# (qwen36-27b-dense, the previous default, was removed 2026-09-02 along with the other Qwen3.6/
+# Qwen3.8-27B-bf16/unsloth-NVFP4 variants -- see gb10-model-configs history.)
 
 if gb10_container_running "$SERVE_CONTAINER"; then
   echo "NOTE: ${SERVE_CONTAINER} already running; stop it first to change models." >&2

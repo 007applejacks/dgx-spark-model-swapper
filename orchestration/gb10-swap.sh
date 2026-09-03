@@ -8,8 +8,8 @@
 #   check target → (already loaded & healthy? NOOP) → stop current → DRAIN GPU → start target → wait health.
 #
 # Designed to run BOTH ways:
-#   • ON the box (the swap-ui backend):   GB10_LOCAL=1 gb10-swap.sh --id qwen36-27b-dense
-#   • FROM token (over SSH, legacy):      gb10-swap.sh --id qwen36-27b-dense
+#   • ON the box (the swap-ui backend):   GB10_LOCAL=1 gb10-swap.sh --id qwen3.8-27b-fp8
+#   • FROM token (over SSH, legacy):      gb10-swap.sh --id qwen3.8-27b-fp8
 #
 # Emits machine-readable progress the backend parses, one per line:
 #   PHASE <stopping|draining|starting|waiting-health>
