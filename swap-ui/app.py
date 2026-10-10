@@ -45,7 +45,7 @@ MODELS_DIR = (CONFIGS_REPO / "models") if (CONFIGS_REPO / "models").is_dir() els
 
 SERVE_PORT = int(os.environ.get("SERVE_PORT", "8002"))
 HF_CACHE_VOL = os.environ.get("HF_CACHE_VOL", "tokenai-hf-cache")
-VLLM_IMAGE = os.environ.get("VLLM_IMAGE", "vllm/vllm-openai:v0.24.0-aarch64")
+VLLM_IMAGE = os.environ.get("VLLM_IMAGE", "vllm/vllm-openai:v0.31.0-aarch64")
 DRAIN_TIMEOUT = os.environ.get("DRAIN_TIMEOUT", "180")
 # HF token for authenticated / gated / full-speed downloads. Comes from the systemd unit's
 # EnvironmentFile=-/etc/gb10-swap.env (root-owned, never committed). Empty → unauthenticated pulls.
