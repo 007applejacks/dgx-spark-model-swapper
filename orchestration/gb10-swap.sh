@@ -67,6 +67,10 @@ if gb10_container_running "$SERVE_CONTAINER"; then
   if [ "$RUNNING_HASH" = "$TARGET_HASH" ] \
      && gb10_ssh "curl -fsS -o /dev/null 'http://localhost:${SERVE_PORT}/health'" 2>/dev/null; then
     echo "target ${SERVED_NAME} already running, healthy, and on the current recipe — nothing to do."
+    # Still record it: a swap that timed out waiting on health (container came up later) or a manual
+    # start never reached the SWAPPED write below, and gb10-serve-boot.service would restore the wrong model.
+    mkdir -p "$STATE_DIR"
+    printf '%s\n' "$MODEL_ID" > "${STATE_DIR}/last-model"
     echo "RESULT NOOP ${SERVED_NAME}"
     exit 0
   fi
