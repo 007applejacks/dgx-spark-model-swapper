@@ -121,7 +121,7 @@ RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 # BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B-FP8):
 #   gb10-serve.sh -m Qwen/Qwen3.8-27B-FP8 -n qwen3.8-27b-fp8 --tools
 # NOTE: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above (MTP k=3,
-# forced PIECEWISE cudagraph). The live qwen3.8-27b-fp8.env (in gb10-model-configs) overrides them
+# forced PIECEWISE cudagraph). The qwen3.8-27b-fp8.env recipe (in gb10-model-configs; production is now qwen3.8-27b-nvfp4) overrides them
 # with MTP k=4 and the default cudagraph mode, validated on vLLM v0.31.0 (MMLU 0.853 via lm_eval
 # loglikelihood, tool gate 0/32). An earlier measurement (MMLU ~45% with spec-decode on, 2026-09-02,
 # vLLM v0.27.1/v0.28.0) did not reproduce on v0.31.0. Prefer SERVE_ENV_FILE=<model>.env over the bare

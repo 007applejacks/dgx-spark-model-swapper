@@ -101,12 +101,15 @@ The dashboard's GPU bay shows the exact endpoint (adapting to how you reached it
   proposes a recipe (reasoning parser by family, context from `max_position_embeddings`, quant from
   `quantization_config`), and lets you edit it. Saved recipes are **drafts** (uncommitted in the
   configs repo), pin the tuning knobs (spec-decode / KV / sampling) **off**, and are flagged experimental.
-- **Test stability** (button on the loaded model) runs the **GB10 stability battery** — generic,
-  model-agnostic checks, each targeting a known GB10 failure mode: endpoint health, basic generation,
-  coherence, long-form (silent stall), streaming (hang), tool-calling (spec-decode drops), large-context
-  (KV OOM), concurrency (wedge), sustained run (EngineDeadError). It judges *server* stability (request
-  completes cleanly) with generous token budgets — empty-output rate is **reported, not gated**, since a
-  reasoning model choosing to think a lot isn't instability.
+- **Test stability** (button on the loaded model) runs the **safe benchmark suite** from `benchmarks.py`:
+  `vllm bench serve` against the running server (30 requests at concurrency 4) plus an lm-eval-harness
+  smoke pass (mmlu, gsm8k, bbh, hellaswag, truthfulqa_mc2 at `limit=5`, so the scores are smoke checks, not
+  quality metrics). Both only send requests to the loaded model. A clean pass clears the Experimental flag
+  and **overwrites the recipe's `UI_SPEED`** with the bench throughput (a random-prompt figure, so
+  restore a hand-measured value from git if the recipe had one).
+  The older GB10 stability battery (`stability.py`: health, generation, coherence, long-form stall,
+  streaming hang, tool-calling, large-context, concurrency, sustained run) is no longer wired to the
+  button or `/api/test`; run it directly with `stability.run_suite(base, model, gpu_snapshot, on_update)`.
 - **Promote** (button on a draft, enabled once non-experimental) does `git add && commit && push` to the
   configs repo from the box — no round-trip needed.
 Use **Export recipe** on a local card to get the `.env` to promote into `models/` and commit.

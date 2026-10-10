@@ -34,7 +34,7 @@ endpoint.
   doesn't expose (tool-parser choice, KV cache dtype, sampling overrides, hand-written comments).
 - **HF lookup** — re-fetch a model's own `config.json` from Hugging Face while editing, so you're
   never trusting a stale or misremembered spec.
-- **GB10 stability battery** — a 9-test suite (health, generation, coherence, long-form,
+- **GB10 stability battery** (`swap-ui/stability.py`, run directly; the UI button now runs the benchmark suite instead) — a 9-test suite (health, generation, coherence, long-form,
   streaming, tool-calling, large-context, concurrency, sustained run) that validates a model
   actually serves reliably on this hardware before you rely on it. A clean pass clears the
   **Experimental** flag.
