@@ -75,16 +75,15 @@ QUANT_ARG=""; [ "$QUANT" != auto ] && QUANT_ARG="--quantization ${QUANT}"
 REASONING_ARG=""; [ -n "$REASONING_PARSER" ] && REASONING_ARG="--reasoning-parser ${REASONING_PARSER}"
 TOOL_ARG="";  [ "$TOOLS" = 1 ] && TOOL_ARG="--enable-auto-tool-choice --tool-call-parser ${TOOL_PARSER}"
 
-# Speculative decoding: native MTP, k=3, on by default. `cudagraph_mode` MUST stay PIECEWISE
-# whenever SPEC_ARG is set — vLLM's default (FULL_AND_PIECEWISE) corrupts tool-call output under
-# spec decode on this hardware/model combo (dropped/malformed tool calls). k=4 was promoted to
-# production once (2026-07-08) and crashed under real load (EngineDeadError, device-side assert in
-# the GDN causal_conv1d_update kernel) -- but that run was ALSO silently serving fp8_e4m3 KV cache
-# with uncalibrated scales (the auto-KV bug fixed below), never isolated as a separate variable, so
-# k=4-the-cause was never actually confirmed vs. the KV bug. Nobody has re-run k=4 since the KV fix
-# landed. Stick with k=3 as the validated default, but treat k=4 as "unconfirmed", not "proven
-# unsafe" -- a fresh isolated test (synthetic gate + real load) is fair game if revisited. Safe to
-# clear COMPILE_ARG only if SPEC_ARG is also cleared.
+# Speculative decoding: native MTP, k=3, on by default for a bare invocation (no SERVE_ENV_FILE).
+# Per-model recipes override this via SPEC_ARG/COMPILE_ARG (set-but-empty clears them).
+# This bare default (k=3 + forced PIECEWISE cudagraph) was validated on vLLM v0.24.0 and is kept as a
+# conservative fallback. On vLLM v0.31.0 (Model Runner V2) a fresh sweep for Qwen3.8-27B-FP8 found the
+# default cudagraph mode (no PIECEWISE forcing) just as fast and clean (0/32 strict tool gate), with
+# k=4 marginally fastest single-stream; k=4 is what qwen3.8-27b-fp8.env now sets. See
+# gpu/docs/vllm-0.31-mtp-sweep-2026-10.md in the AITools repo. Re-validate per model/vLLM version
+# before relying on any k or cudagraph choice -- earlier failure notes (FULL-cudagraph tool-call
+# corruption, k=4 crash) were version- and KV-config-specific and did not reproduce on v0.31.0.
 SPEC_ARG="${SPEC_ARG-"--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'"}"
 COMPILE_ARG="${COMPILE_ARG-"--compilation-config '{\"cudagraph_mode\":\"PIECEWISE\"}'"}"
 
@@ -121,13 +120,12 @@ RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 
 # BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B-FP8):
 #   gb10-serve.sh -m Qwen/Qwen3.8-27B-FP8 -n qwen3.8-27b-fp8 --tools
-# CAUTION: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above --
-# MTP(k=3) spec-decode ON, forced PIECEWISE cudagraph -- which is NOT what's actually validated
-# for Qwen3.8-27B-FP8: the live qwen3.8-27b-fp8.env (in gb10-model-configs) explicitly clears
-# SPEC_ARG/COMPILE_ARG, because MTP(k=3) was found to badly corrupt loglikelihood/logprob scoring
-# on this model family (measured: MMLU ~45% with spec-decode on vs ~84% off, 2026-09-02 — see
-# git history). Always prefer SERVE_ENV_FILE=<model>.env over the bare fallback for real use;
-# this path exists for standalone/legacy invocations only.
+# NOTE: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above (MTP k=3,
+# forced PIECEWISE cudagraph). The live qwen3.8-27b-fp8.env (in gb10-model-configs) overrides them
+# with MTP k=4 and the default cudagraph mode, validated on vLLM v0.31.0 (MMLU 0.853 via lm_eval
+# loglikelihood, tool gate 0/32). An earlier measurement (MMLU ~45% with spec-decode on, 2026-09-02,
+# vLLM v0.27.1/v0.28.0) did not reproduce on v0.31.0. Prefer SERVE_ENV_FILE=<model>.env over the bare
+# fallback for real use; this path exists for standalone/legacy invocations only.
 # (qwen36-27b-dense, the previous default, was removed 2026-09-02 along with the other Qwen3.6/
 # Qwen3.8-27B-bf16/unsloth-NVFP4 variants -- see gb10-model-configs history.)
 
