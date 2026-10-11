@@ -388,12 +388,27 @@ def _current_model() -> dict[str, Any]:
         if served and m["served_name"] == served:
             model_id = m["id"]
             break
+    healthy = bool(health and served)
+    # A container that is up but not yet serving is LOADING. vLLM reports no served name until it is
+    # ready, so name the occupant from the container (swap-vllm-<served_name>) -- otherwise the bay
+    # shows the bay as empty/stale while a model is mid-load (#27).
+    loading = container is not None and not healthy
+    starting_name = starting_model_id = None
+    if loading:
+        starting_name = container[len("swap-vllm-"):] if container.startswith("swap-vllm-") else container
+        for m in _load_registry():
+            if m["served_name"] == starting_name:
+                starting_model_id = m["id"]
+                break
     return {
         "container": container,
         "served_name": served,
         "model_id": model_id,
-        "healthy": bool(health and served),
+        "healthy": healthy,
         "loaded": container is not None,
+        "loading": loading,
+        "starting_name": starting_name,
+        "starting_model_id": starting_model_id,
         "uptime_s": _container_uptime_s(container) if container else None,
     }
 
@@ -529,6 +544,11 @@ def api_unload() -> dict[str, Any]:
     """Stop the serving vLLM container(s) and leave the GB10 free (empty bay). Same stop criteria as
     a swap (serving containers only — a portless model download is left running). Also clears the
     last-model state so a reboot comes up empty rather than reloading."""
+    # Refuse while a swap job is mid-flight: Unload acts on whatever container is on the port, which
+    # would kill the in-progress load and misreport it as a startup crash (#27). Cancel is the
+    # supported way to abort a load.
+    if JOB["state"] == "running":
+        raise HTTPException(409, f"a swap to {JOB.get('model_id')} is in progress — use Cancel to abort the load, not Unload")
     rc, out, _ = _run(["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}\t{{.Image}}"])
     stopped: list[str] = []
     if rc == 0:

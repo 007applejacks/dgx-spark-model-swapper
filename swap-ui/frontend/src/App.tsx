@@ -340,6 +340,13 @@ export default function App() {
   }, [poll]);
 
   const onUnload = useCallback(async () => {
+    // A container that is up but not yet serving is mid-load; Unload would kill it (#27). Make that explicit.
+    if (
+      status?.current.loading &&
+      !window.confirm(`${status.current.starting_name ?? "The model"} is still loading. Unload it anyway?`)
+    ) {
+      return;
+    }
     setUnloading(true);
     try {
       await api.unload();
@@ -350,7 +357,7 @@ export default function App() {
     } finally {
       setUnloading(false);
     }
-  }, [poll]);
+  }, [poll, status]);
 
   const swapping = status?.swap.state === "running";
   const testing = testJob?.state === "running";

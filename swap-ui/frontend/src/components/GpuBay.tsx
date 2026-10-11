@@ -133,7 +133,7 @@ export function GpuBay({
 }) {
   const { gpu, current, swap, serve_port, connections, throughput } = status;
   const swapping = swap.state === "running";
-  const occupant = models.find((m) => m.id === current.model_id);
+  const occupant = models.find((m) => m.id === (current.model_id ?? current.starting_model_id));
   const [confirmThroughputOpen, setConfirmThroughputOpen] = useState(false);
 
   const coreState = gpu.wedged
@@ -195,11 +195,11 @@ export function GpuBay({
         ) : (
           <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
             <div className="min-w-0">
-              <Eyebrow className={current.loaded ? "text-signal" : "text-muted"}>
-                {current.loaded ? "Loaded" : "Bay empty"}
+              <Eyebrow className={current.loading ? "text-amber" : current.loaded ? "text-signal" : "text-muted"}>
+                {current.loading ? "Loading" : current.loaded ? "Loaded" : "Bay empty"}
               </Eyebrow>
               <h2 className="mt-1 break-words font-display text-xl font-bold text-ink sm:text-3xl">
-                {occupant?.label || current.served_name || "No model loaded"}
+                {occupant?.label || current.served_name || current.starting_name || "No model loaded"}
               </h2>
               {current.served_name && (
                 <p className="mt-1 font-mono text-xs text-muted">
@@ -230,7 +230,8 @@ export function GpuBay({
                 <Button
                   variant="ghost"
                   onClick={onUnload}
-                  disabled={unloading || testing}
+                  disabled={unloading || testing || swapping}
+                  title={swapping ? "A load is in progress — use Cancel to abort it" : undefined}
                   className="w-full sm:w-auto"
                 >
                   <PowerOff className="h-3.5 w-3.5" /> {unloading ? "Unloading…" : "Unload"}

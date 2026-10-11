@@ -32,6 +32,9 @@ export interface Current {
   model_id: string | null;
   healthy: boolean;
   loaded: boolean;
+  loading: boolean;
+  starting_name: string | null;
+  starting_model_id: string | null;
   uptime_s: number | null;
 }
 
