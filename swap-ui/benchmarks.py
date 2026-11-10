@@ -168,13 +168,22 @@ def _parse_vllm_benchmark_output(output: str) -> dict[str, Any]:
                 nums = re.findall(r"[\d.]+", line)
                 if nums:
                     result["throughput_tok_s"] = float(nums[-1])
+        elif m := re.match(r"(Mean|Median|P\d+)\s+(TTFT|TPOT|ITL|E2EL)\s+\(ms\):\s*([\d.]+)", line):
+            # `vllm bench serve` latency rows, e.g. "P99 TTFT (ms):   2193.64". Read the value
+            # AFTER the colon. The old code ran _extract_float over the whole line and took the
+            # first number, the "99" in the "P99" label, so every P99 row (and ttft_ms, which the
+            # P99 TTFT row overwrote) came back as 99.0. Keys: mean_ttft_ms, p99_tpot_ms, ...
+            # ttft_ms keeps the mean, which is the field the dashboard's TTFT row shows.
+            stat, metric, val = m.group(1).lower(), m.group(2).lower(), float(m.group(3))
+            result[f"{stat}_{metric}_ms"] = val
+            if stat == "mean" and metric == "ttft":
+                result["ttft_ms"] = val
+        elif line.startswith("Acceptance rate (%):"):
+            result["spec_acceptance_pct"] = _extract_float(line.split(":", 1)[1])
+        elif line.startswith("Acceptance length:"):
+            result["spec_acceptance_len"] = _extract_float(line.split(":", 1)[1])
         elif "Latency" in line and ("avg" in line.lower() or "mean" in line.lower()):
-            result["avg_latency_ms"] = _extract_float(line)
-        elif "TTFT" in line or "Time to first token" in line:
-            result["ttft_ms"] = _extract_float(line)
-        elif "P50" in line or "P90" in line or "P99" in line:
-            key = line.split(":")[0].strip().lower().replace(" ", "_")
-            result[key] = _extract_float(line)
+            result["avg_latency_ms"] = _extract_float(line.split(":", 1)[-1])
         elif "Successful requests" in line:
             result["successful_requests"] = _extract_int(line)
         elif "Failed requests" in line:
