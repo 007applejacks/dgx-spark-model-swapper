@@ -78,7 +78,7 @@ endpoint.
    no separate git step needed.
 
 New recipes always start as **drafts**, and their tuning knobs (spec-decode, KV cache dtype,
-sampling overrides) are pinned off — validated per-model tuning like the canonical Qwen3.6 recipe
+sampling overrides) are pinned off — validated per-model tuning like the Qwen3.8-27B recipes' MTP settings
 isn't something the importer can infer from `config.json` alone.
 
 **Gated or rate-limited repos**: set `HF_TOKEN` (see `swap-ui/README.md`'s "Model lifecycle"

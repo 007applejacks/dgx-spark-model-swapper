@@ -8,8 +8,8 @@
 #   gb10-serve.sh -m <merged-or-base-dir-on-the-box> -n <served-model-name> \
 #                 [-q nvfp4|fp8] [--max-model-len N]
 #
-# Model-specific paths/flags live in local/gb10/*.env (gitignored); pass with
-# SERVE_ENV_FILE=local/gb10/qwen36.env to add extra `vllm serve` args.
+# Model-specific recipes live in the gb10-model-configs repo (models/*.env); pass one with
+# SERVE_ENV_FILE=<configs>/models/qwen3.8-27b.env to add its per-model `vllm serve` args.
 set -euo pipefail
 . "$(dirname "$0")/gb10-lib.sh"
 
@@ -29,8 +29,8 @@ if [ -n "${SERVE_ENV_FILE:-}" ]; then
   . "${SERVE_ENV_FILE}"
 fi
 
-# MAX_LEN default = 262144 (256K = Qwen3.6's full native window). [measured] this fits the locked
-# Qwen3.6-27B-NVFP4 with huge room — the hybrid Gated-DeltaNet linear-attention layers keep KV
+# MAX_LEN default = 262144 (256K = Qwen3.8-27B's full native window). [measured] this fits the
+# Qwen3.8-27B checkpoints (BF16/FP8/NVFP4) with room to spare — the hybrid Gated-DeltaNet linear-attention layers keep KV
 # ~flat (only the periodic full-attention layers grow), so 256K costs far less KV than a
 # non-hybrid dense model of similar size would. A fully-dense fallback (e.g. Qwen3-32B, no GDN
 # layers) has much larger KV per token — pass a smaller --max-model-len for it.
@@ -66,7 +66,7 @@ esac; done
 # omits --quantization. Pass -q only to force a method. Tool-calling is opt-in.
 # Parser = qwen3_xml: the alternative qwen3_coder parser systematically mis-extracts calls
 # (schema placeholders as values, reasoning bleeding into tool names); qwen3_xml parses the
-# <function=...><parameter=...> template format cleanly. Qwen3.6 is a thinking model — always
+# <function=...><parameter=...> template format cleanly. Qwen3.8 is a thinking model — always
 # parse the <think>...</think> stream out with --reasoning-parser qwen3, which returns reasoning
 # in the response's `reasoning` field, keeping `content` + tool_calls clean. Harmless when
 # thinking is disabled (no think block → nothing to strip).
@@ -92,7 +92,7 @@ COMPILE_ARG="${COMPILE_ARG-"--compilation-config '{\"cudagraph_mode\":\"PIECEWIS
 # tradeoff. bf16 costs ~2x the KV memory of fp8 but throughput is unaffected (weights dominate
 # memory traffic, not KV).
 KV_ARG="${KV_ARG-"--kv-cache-dtype bfloat16"}"
-# Qwen3.6 recommended server-side sampling defaults (per-request client values override these).
+# Qwen3.x recommended server-side sampling defaults (per-request client values override these).
 # JSON single-quoted to survive the gb10_ssh hop — verify it reaches vllm intact on FIRST re-serve.
 GENCFG_ARG="${GENCFG_ARG-"--override-generation-config '{\"temperature\": 0.6, \"presence_penalty\": 0.0}'"}"
 
@@ -118,16 +118,16 @@ RUN_ARGS="--gpus all --ipc=host \
 RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 [ "${PRINT_HASH:-0}" = 1 ] && { echo "$RECIPE_HASH"; exit 0; }
 
-# BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B-FP8):
-#   gb10-serve.sh -m Qwen/Qwen3.8-27B-FP8 -n qwen3.8-27b-fp8 --tools
+# BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B BF16):
+#   gb10-serve.sh -m Qwen/Qwen3.8-27B -n qwen3.8-27b --tools
 # NOTE: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above (MTP k=3,
-# forced PIECEWISE cudagraph). The qwen3.8-27b-fp8.env recipe (in gb10-model-configs; production is now qwen3.8-27b-nvfp4) overrides them
-# with MTP k=4 and the default cudagraph mode, validated on vLLM v0.31.0 (MMLU 0.853 via lm_eval
+# forced PIECEWISE cudagraph). The per-model recipes in gb10-model-configs override them: e.g.
+# qwen3.8-27b-fp8.env uses MTP k=4 and the default cudagraph mode, validated on vLLM v0.31.0 (MMLU 0.853 via lm_eval
 # loglikelihood, tool gate 0/32). An earlier measurement (MMLU ~45% with spec-decode on, 2026-09-02,
 # vLLM v0.27.1/v0.28.0) did not reproduce on v0.31.0. Prefer SERVE_ENV_FILE=<model>.env over the bare
 # fallback for real use; this path exists for standalone/legacy invocations only.
-# (qwen36-27b-dense, the previous default, was removed 2026-09-02 along with the other Qwen3.6/
-# Qwen3.8-27B-bf16/unsloth-NVFP4 variants -- see gb10-model-configs history.)
+# (History: qwen36-27b-dense was the default until 2026-09-02, then Qwen3.8-27B-FP8 until
+# 2026-11-10, when the BF16 Qwen3.8-27B recipe was restored as the default.)
 
 if gb10_container_running "$SERVE_CONTAINER"; then
   echo "NOTE: ${SERVE_CONTAINER} already running; stop it first to change models." >&2
