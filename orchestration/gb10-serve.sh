@@ -9,7 +9,7 @@
 #                 [-q nvfp4|fp8] [--max-model-len N]
 #
 # Model-specific recipes live in the gb10-model-configs repo (models/*.env); pass one with
-# SERVE_ENV_FILE=<configs>/models/qwen3.8-27b.env to add its per-model `vllm serve` args.
+# SERVE_ENV_FILE=<configs>/models/qwen3.8-27b-nvfp4.env to add its per-model `vllm serve` args.
 set -euo pipefail
 . "$(dirname "$0")/gb10-lib.sh"
 
@@ -118,8 +118,10 @@ RUN_ARGS="--gpus all --ipc=host \
 RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 [ "${PRINT_HASH:-0}" = 1 ] && { echo "$RECIPE_HASH"; exit 0; }
 
-# BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B BF16):
-#   gb10-serve.sh -m Qwen/Qwen3.8-27B -n qwen3.8-27b --tools
+# BARE-FALLBACK example (containers.env's no-arg default, currently Qwen3.8-27B-NVFP4):
+#   gb10-serve.sh -m nvidia/Qwen3.8-27B-NVFP4 -n qwen3.8-27b-nvfp4 --tools
+# A bare run does NOT get the recipe's fp8 KV / GPU_UTIL 0.7 / fastsafetensors / MTP k=5. Use
+# SERVE_ENV_FILE=<configs>/models/qwen3.8-27b-nvfp4.env for the validated config.
 # NOTE: a truly bare invocation (no SERVE_ENV_FILE) gets THIS script's own defaults above (MTP k=3,
 # forced PIECEWISE cudagraph). The per-model recipes in gb10-model-configs override them: e.g.
 # qwen3.8-27b-fp8.env uses MTP k=4 and the default cudagraph mode, validated on vLLM v0.31.0 (MMLU 0.853 via lm_eval
@@ -127,7 +129,8 @@ RECIPE_HASH="$(printf '%s' "$RUN_ARGS" | sha256sum | cut -d' ' -f1)"
 # vLLM v0.27.1/v0.28.0) did not reproduce on v0.31.0. Prefer SERVE_ENV_FILE=<model>.env over the bare
 # fallback for real use; this path exists for standalone/legacy invocations only.
 # (History: qwen36-27b-dense was the default until 2026-09-02, then Qwen3.8-27B-FP8 until
-# 2026-11-10, when the BF16 Qwen3.8-27B recipe was restored as the default.)
+# 2026-11-10. That day BF16 Qwen3.8-27B was briefly the default, then nvidia/Qwen3.8-27B-NVFP4 took
+# over after measuring the same MMLU at ~2.6x the speed.)
 
 if gb10_container_running "$SERVE_CONTAINER"; then
   echo "NOTE: ${SERVE_CONTAINER} already running; stop it first to change models." >&2
